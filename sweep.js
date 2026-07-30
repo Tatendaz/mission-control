@@ -15,6 +15,18 @@ const HERE = __dirname;
 const CFG = JSON.parse(fs.readFileSync(path.join(HERE, "config.json"), "utf8"));
 const HOME = process.env.HOME || "/Users/" + (process.env.USER || "");
 const untilde = p => p && p.startsWith("~") ? HOME + p.slice(1) : p;
+/* the scribe resolves symlinks before matching; do the same here so a
+   transcript recorded under a symlinked root still finds its project */
+const REAL = new Map();
+const norm = p => {
+  if (!p) return p;
+  if (REAL.has(p)) return REAL.get(p);
+  let s = untilde(p);
+  try { s = fs.realpathSync(s); } catch {}
+  s = s.length > 1 ? s.replace(/\/+$/, "") : s;
+  REAL.set(p, s);
+  return s;
+};
 const tilde = p => p && p.startsWith(HOME) ? "~" + p.slice(HOME.length) : p;
 const HOME_DIR = () => path.resolve(HERE, untilde(CFG.home || "."));
 const DRY = process.argv.includes("--dry");
@@ -209,8 +221,11 @@ function assemble() {
   const owner = (CFG.ghOwner || "").toLowerCase();
   const prsFor = reg => {
     const raw = (reg.ghRepo || reg.label || path.basename(untilde(reg.repoPath || reg.path) || "")).toLowerCase();
-    const full = raw.includes("/") ? raw : (owner ? owner + "/" + raw : raw);
-    return byRepo[full] || [];
+    if (raw.includes("/")) return byRepo[raw] || [];
+    if (owner) return byRepo[owner + "/" + raw] || [];
+    /* no ghOwner configured: fall back to a repo-name match across owners */
+    const hit = Object.keys(byRepo).filter(k => k.endsWith("/" + raw));
+    return hit.length === 1 ? byRepo[hit[0]] : [];
   };
 
   const projects = [];
@@ -277,19 +292,21 @@ function assemble() {
       let best = -1;
       for (const other of CFG.projects) {
         if (other.aggregate) continue;
-        for (const c of [untilde(other.path), other.repoPath && untilde(other.repoPath)]) {
+        for (const c of [norm(other.path), other.repoPath && norm(other.repoPath)]) {
           if (!c) continue;
           if ((p2 === c || p2.startsWith(c + "/")) && c.length > best) best = c.length;
         }
       }
       return best;
     };
+    const realCands = cands.map(norm);
     for (const sd of sess) {
       let mine;
       if (sd.cwd) {
-        const owner = claimLen(sd.cwd);
-        mine = cands.some(c => (sd.cwd === c || sd.cwd.startsWith(c + "/")) && c.length >= owner)
-          && (!reg.sessionExact || cands.includes(sd.cwd));
+        const cwd = norm(sd.cwd);
+        const owner = claimLen(cwd);
+        mine = realCands.some(c => (cwd === c || cwd.startsWith(c + "/")) && c.length >= owner)
+          && (!reg.sessionExact || realCands.includes(cwd));
       } else {
         /* no transcript cwd: fall back to the lossy encoded directory name */
         mine = prefixes.some(pre => reg.sessionExact ? sd.enc === pre : (sd.enc === pre || sd.enc.startsWith(pre + "-")));

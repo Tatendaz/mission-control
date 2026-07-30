@@ -195,7 +195,13 @@ async function launch(id) {
   const prompted = await herdr(["agent", "prompt", name, buildPrompt(p)], 20000);
   if (!prompted || prompted.error) return { ok: false, error: "claude started but the prompt was not accepted" };
 
-  if (CFG.terminalApp) await run("/usr/bin/osascript", ["-e", `tell application "${CFG.terminalApp}" to activate`], 4000);
+  /* the app name is interpolated into AppleScript source: allow only a plain
+     name, so a quote or backslash in config cannot become another statement */
+  if (CFG.terminalApp && /^[A-Za-z0-9 ._-]{1,40}$/.test(CFG.terminalApp)) {
+    await run("/usr/bin/osascript", ["-e", `tell application "${CFG.terminalApp}" to activate`], 4000);
+  } else if (CFG.terminalApp) {
+    log("terminalApp ignored: name must be plain letters, digits, spaces, dot, underscore or dash");
+  }
   log("launched", p.id, "ws", wsId, "pane", paneId);
   return { ok: true, workspace: wsId, pane: paneId };
 }
