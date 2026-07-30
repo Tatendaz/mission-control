@@ -4,9 +4,9 @@
 **Date:** 2026-07-30
 
 ## Summary
-A minimal GitHub Actions workflow that keeps the repo installable: the three
-engine scripts must parse, and a fresh-install dry sweep (example config +
-template) must find every marker region.
+A minimal GitHub Actions workflow that keeps the smoke paths healthy: the
+three engine scripts must parse, and a dry sweep against the example config
+and template must find every marker region.
 
 ## Motivation
 The sweeper rewrites `board.html` in place between markers; a template or
