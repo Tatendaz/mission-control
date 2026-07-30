@@ -378,8 +378,6 @@ function render(d) {
       </div>`).join("")}
     </div>`, true);
 
-  html = region(html, "BOARDHEAD", `    <h2>${capWord(d.figures.workstreams)} workstreams</h2>`, true);
-
   html = region(html, "PRS", `
     <h2>${capWord(d.figures.prs)} ${d.figures.prs === 1 ? "is" : "are"} waiting on you</h2>
     <p class="sub">Across ${numWord(d.figures.prRepos)} repositories. The oldest ones are blocked on decisions, not code.</p>

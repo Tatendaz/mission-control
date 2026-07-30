@@ -108,11 +108,12 @@
     border-bottom: 1px solid var(--grid);
     padding: 12px 32px;
     display: flex; align-items: center; gap: 22px; flex-wrap: wrap;
+    view-transition-name: hdr;   /* keeps the header rock-steady during view switches */
   }
-  header .brand { display: flex; align-items: baseline; gap: 12px; white-space: nowrap; }
+  header .brand { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+  #brandMark { width: 22px; height: 22px; border-radius: 6px; display: block; }
   header h1 { font: 700 16px/1 var(--display); letter-spacing: -0.01em; }
   header .date { font: 11.5px var(--mono); color: var(--ink-3); }
-  nav { display: flex; gap: 16px; flex-wrap: wrap; }
   nav { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
   nav a { color: var(--ink-2); font-size: 13px; padding: 5px 10px; border-radius: 7px; white-space: nowrap; transition: color .15s var(--out), background .15s var(--out); }
   nav a:hover { color: var(--ink-1); background: var(--accent-soft); }
@@ -143,15 +144,19 @@
   }
   section + section { border-top: 1px solid var(--grid); }
   .kick {
-    position: sticky; top: 72px; align-self: start;
+    /* static: in the tabbed layout a sticky rail label rides over the content */
+    align-self: start;
     display: flex; gap: 12px; align-items: baseline;
     font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: 0.14em;
     color: var(--ink-3); padding-top: 10px;
   }
   .kick .kn { color: var(--accent); }
-  /* the board breaks out of the rail and the measure to fit the card wall */
-  #board { width: 100%; grid-template-columns: 1fr; }
-  #board .kick { position: static; padding: 0 0 18px; }
+  /* the board breaks out of the rail and the measure to fit the card wall,
+     and starts right at the tabs: every pixel above the fold is cards */
+  #board { width: 100%; grid-template-columns: 1fr; padding-top: 30px; }
+  #chgNote { margin-left: auto; padding-bottom: 10px; font-size: 12.5px; font-weight: 600; color: var(--ink-1); }
+  .hintline { color: var(--ink-3); font-size: 12.5px; margin-top: 26px; max-width: none; }
+  .hintline .k { color: var(--ink-2); font-weight: 600; }
   h2 { font: 700 30px/1.15 var(--display); letter-spacing: -0.025em; margin-bottom: 10px; }
   .sub { color: var(--ink-2); font-size: 14.5px; max-width: 72ch; margin-bottom: 26px; }
   .sub .chg-note { color: var(--ink-1); font-weight: 600; }
@@ -522,6 +527,11 @@
     .acts { opacity: 1; pointer-events: auto; position: static; margin-left: auto; }
     .entry .when { display: none; }
   }
+  @media (max-width: 1180px) {
+    /* keep the header two rows max: brand + controls, then the nav rail */
+    nav { order: 10; width: 100%; }
+    #search { width: 140px; }
+  }
   @media (max-width: 640px) {
     .row { grid-template-columns: 112px 1fr 84px; }
     header { padding: 10px 16px; }
@@ -581,7 +591,7 @@
 
 <header>
   <div class="brand">
-    <h1>Project Radar</h1>
+    <img id="brandMark" alt="" width="22" height="22" src="data:image/png;base64,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"><h1>Project Radar</h1>
     <span class="date"><!-- SWEEP:STAMP -->
 Swept Jul 30, 08:00
 <!-- /SWEEP:STAMP --></span>
@@ -651,17 +661,13 @@ Swept Jul 30, 08:00
 
 <!-- ═══ 03 BOARD ═══ -->
 <section id="board">
-  <div class="kick"><span class="kn">03</span>Board</div>
   <div class="content">
-    <!-- SWEEP:BOARDHEAD -->
-    <h2>Six workstreams</h2>
-<!-- /SWEEP:BOARDHEAD -->
-    <p class="sub" id="boardSub">One card per workstream, built from git, pull requests, and session logs. Hover a card to send it to Herdr, pin it, copy a resume command, or move it to Trash. Expand a card for the last session and next steps.</p>
     <div class="tabs" role="tablist" aria-label="Board views">
       <button class="tab" role="tab" id="tabBoard" aria-selected="true" data-tab="board">Board<span class="n" id="nBoard"></span></button>
       <button class="tab" role="tab" id="tabInbox" aria-selected="false" data-tab="inbox">Inbox<span class="n" id="nInbox"></span></button>
       <button class="tab" role="tab" id="tabTrash" aria-selected="false" data-tab="trash">Trash<span class="n" id="nTrash"></span></button>
       <span class="tind" aria-hidden="true"></span>
+      <span id="chgNote" hidden></span>
       <button id="emptyTrash" class="btn danger" hidden>Empty trash</button>
     </div>
     <div class="filters" id="filters" role="group" aria-label="Filter projects"></div>
@@ -670,7 +676,9 @@ Swept Jul 30, 08:00
     <div class="entries" id="boardGrid">
       <div class="tempty" id="tempty" hidden>Trash is empty. Deleted cards land here and stay until you delete them forever.</div>
       <div class="tempty" id="iempty" hidden>Inbox zero. Say "Hey Siri, Idea" to the watch and it lands here on the next sweep.</div>
+      <div class="tempty" id="nomatch" hidden>No cards match. Esc clears the search.</div>
     </div>
+    <p class="hintline">Hover a card: <span class="k">🐏</span> starts Claude on it in Herdr, <span class="k">★</span> pins, <span class="k">❯</span> copies the resume command, <span class="k">✕</span> trashes. Cards are built from git, PRs and session logs; press <span class="k">/</span> to search, <span class="k">t</span> for theme.</p>
   </div>
 </section>
 
@@ -1136,6 +1144,7 @@ function update(){
     ch.querySelector(".n").textContent = k==="all" ? boardP.length : boardP.filter(p=>p.cat===k).length;
   });
 
+  let shownBoard = 0;
   PROJECTS.forEach(p=>{
     const el = cardEls.get(p.id), t = tombs[p.id];
     if (t?.purged) { el.classList.add("hidden"); return; }
@@ -1148,6 +1157,7 @@ function update(){
       ? false
       : !t && (activeCat==="all" || p.cat===activeCat) && (!q || el.dataset.text.includes(q));
     el.classList.toggle("hidden", !show);
+    if (show) shownBoard++;
     if (t) el.querySelector(".tmeta").textContent = agoTxt(t.d);
   });
   ideaEls.forEach(el=>{
@@ -1165,9 +1175,21 @@ function update(){
   emptyBtn.hidden = !(tab==="trash" && trashP.length>0);
   temptyEl.hidden = !(tab==="trash" && trashP.length===0);
   document.getElementById("iempty").hidden = !(tab==="inbox" && INBOX.length===0);
+  document.getElementById("nomatch").hidden = !(tab==="board" && q && shownBoard===0);
+  document.querySelector(".hintline").hidden = tab!=="board";
+  const cn = document.getElementById("chgNote");
+  cn.hidden = tab!=="board" || !cn.textContent;
   placeInd();
 }
-searchEl.addEventListener("input", ()=>update());   /* instant, no transition while typing */
+searchEl.addEventListener("input", ()=>{
+  /* searching from any view jumps to the board, where the results live.
+     No view transition here: its capture freeze would eat keystrokes. */
+  if (searchEl.value && !document.getElementById("board").classList.contains("on")) {
+    history.replaceState(null, "", "#board");
+    showView("board");
+  }
+  update();   /* instant, no transition while typing */
+});
 update();
 
 /* ── changed since your last visit ────────────────── */
@@ -1178,10 +1200,9 @@ update();
     const changed = PROJECTS.filter(p=> prev.m[p.id]!==undefined && prev.m[p.id]!==(p.last||""));
     if (changed.length) {
       changed.forEach(p=>cardEls.get(p.id).classList.add("chg"));
-      const s = document.createElement("span");
-      s.className = "chg-note";
-      s.textContent = ` ${changed.length} card${changed.length>1?"s":""} updated since your last visit.`;
-      document.getElementById("boardSub").appendChild(s);
+      const note = document.getElementById("chgNote");
+      note.textContent = `${changed.length} card${changed.length>1?"s":""} updated since your last visit`;
+      note.hidden = false;
     }
   }
   /* refresh the snapshot at most every 6 hours so the markers survive same-day reloads */
@@ -1260,6 +1281,16 @@ function showView(v){
 }
 showView((location.hash||"").slice(1) || "board");
 addEventListener("hashchange", ()=>vt(()=>showView((location.hash||"").slice(1) || "board")));
+/* views are panels: defeat the browser's native hash-anchor scroll on load,
+   which otherwise tucks the section heading under the sticky header */
+history.scrollRestoration = "manual";
+addEventListener("load", ()=>scrollTo(0, 0));
+
+/* favicon = the brand mark (same data URI, no extra bytes) */
+const fav = document.createElement("link");
+fav.rel = "icon";
+fav.href = document.getElementById("brandMark").src;
+document.head.appendChild(fav);
 
 /* ── mission control live layer (only when served, not as a bare file) ── */
 const flashEl = document.createElement("div");
