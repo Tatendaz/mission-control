@@ -1,0 +1,25 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Engine parses
+        run: |
+          node --check sweep.js
+          node --check server.js
+          node --check scribe.js
+      - name: Template markers survive a dry sweep
+        # A fresh install is config.example + template; the sweeper must find
+        # every marker region and abort cleanly with no repos, gh, or sessions.
+        run: |
+          cp config.example.json config.json
+          cp board.template.html board.html
+          node sweep.js --dry
