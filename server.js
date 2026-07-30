@@ -94,7 +94,7 @@ function watchStatus() {
       try { w.close(); } catch {}
       setTimeout(watchStatus, 5000);
     });
-  } catch (e) { log("status watch failed:", e.message); }
+  } catch (e) { log("status watch failed:", e.message); setTimeout(watchStatus, 5000); }
 }
 watchStatus();
 
@@ -255,6 +255,7 @@ const server = http.createServer(async (req, res) => {
       json(res, 202, { started: true });
     } else if (req.method === "POST" && u.pathname === "/api/launch") {
       let body = "", over = false;
+      req.setEncoding("utf8");   /* decode across chunk boundaries, not per chunk */
       req.on("data", c => {
         if (over) return;
         body += c;

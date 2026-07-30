@@ -74,6 +74,7 @@ function originOf(p) {
   if (!u) return null;
   u = u.replace(/^[a-z+]+:\/\//, "").replace(/^ssh:\/\//, "");
   u = u.replace(/^[^@/]*@/, "");   /* git@host and https://user:token@host both drop out */
+  u = u.replace(/:(\d+)(?=\/)/, "");   /* an explicit ssh port is not part of the identity */
   return u.replace(":", "/").replace(/\.git$/, "").replace(/\/$/, "").toLowerCase();
 }
 
@@ -511,27 +512,32 @@ function boardMd(d) {
 }
 
 /* ═══ main ═══ */
-/* never process.exit() right after writing to stdout: a piped stdout is async
-   and the write is truncated at the pipe buffer (~64KB) */
-const d = assemble();
-if (AS_JSON) { process.stdout.write(JSON.stringify(d, null, 2) + "\n"); return; }
-const { file, html } = render(d);
-if (DRY) { process.stdout.write("dry run ok — all markers found, no files written\n"); return; }
+/* wrapped in a function: a bare top-level return is only legal because CommonJS
+   wraps the file, and it breaks the moment anything parses this as a module.
+   Never process.exit() right after writing to stdout either — a piped stdout is
+   async and the write is truncated at the pipe buffer (~64KB). */
+function main() {
+  const d = assemble();
+  if (AS_JSON) { process.stdout.write(JSON.stringify(d, null, 2) + "\n"); return; }
+  const { file, html } = render(d);
+  if (DRY) { process.stdout.write("dry run ok — all markers found, no files written\n"); return; }
 
-/* backup, then write */
-const bdir = path.join(HERE, "backups");
-fs.mkdirSync(bdir, { recursive: true });
-const stamp = new Date(NOW).toISOString().slice(0, 19).replace(/[:T]/g, "-");
-fs.copyFileSync(file, path.join(bdir, `radar-${stamp}.html`));
-const old = fs.readdirSync(bdir).filter(f => f.startsWith("radar-")).sort();
-while (old.length > 10) fs.unlinkSync(path.join(bdir, old.shift()));
+  /* backup, then write */
+  const bdir = path.join(HERE, "backups");
+  fs.mkdirSync(bdir, { recursive: true });
+  const stamp = new Date(NOW).toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  fs.copyFileSync(file, path.join(bdir, `radar-${stamp}.html`));
+  const old = fs.readdirSync(bdir).filter(f => f.startsWith("radar-")).sort();
+  while (old.length > 10) fs.unlinkSync(path.join(bdir, old.shift()));
 
-fs.writeFileSync(file, html);
-fs.writeFileSync(path.join(HERE, "data.json"), JSON.stringify({
-  sweptAt: NOW, projects: d.projects.map(p => ({
-    id: p.id, name: p.name, label: p._label, path: p._abs, tildePath: p.path,
-    launch: !p._noLaunch, lastWork: p.lastWork, next: p.next, flags: p.flags,
-  })), inbox: d.inbox, figures: d.figures,
-}, null, 2));
-fs.writeFileSync(path.join(HOME_DIR(), "BOARD.md"), boardMd(d));
-process.stdout.write(`swept ${d.scannedDirs} checkouts · ${d.figures.prs} PRs · inbox ${d.inbox.length} · ${d.hazards.filter(h => h.sev === "crit").length} critical hazards · board + BOARD.md + data.json written${d.ghStale ? " (gh offline, cached)" : ""}\n`);
+  fs.writeFileSync(file, html);
+  fs.writeFileSync(path.join(HERE, "data.json"), JSON.stringify({
+    sweptAt: NOW, projects: d.projects.map(p => ({
+      id: p.id, name: p.name, label: p._label, path: p._abs, tildePath: p.path,
+      launch: !p._noLaunch, lastWork: p.lastWork, next: p.next, flags: p.flags,
+    })), inbox: d.inbox, figures: d.figures,
+  }, null, 2));
+  fs.writeFileSync(path.join(HOME_DIR(), "BOARD.md"), boardMd(d));
+  process.stdout.write(`swept ${d.scannedDirs} checkouts · ${d.figures.prs} PRs · inbox ${d.inbox.length} · ${d.hazards.filter(h => h.sev === "crit").length} critical hazards · board + BOARD.md + data.json written${d.ghStale ? " (gh offline, cached)" : ""}\n`);
+}
+main();

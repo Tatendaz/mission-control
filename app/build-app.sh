@@ -11,7 +11,10 @@ if [ -z "$NODE" ]; then
   exit 1
 fi
 PORT="$("$NODE" -p 'JSON.parse(require("fs").readFileSync("'"$ROOT"'/config.json","utf8")).port ?? 8765' 2>/dev/null || echo 8765)"
-case "$PORT" in ''|*[!0-9]*) PORT=8765 ;; esac
+case "$PORT" in
+  ''|*[!0-9]*) PORT=8765 ;;
+  *) [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || PORT=8765 ;;
+esac
 
 APP="Mission Control.app"
 rm -rf "$APP"

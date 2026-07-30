@@ -103,19 +103,42 @@ async function main(hook) {
   const safeId = String(proj.id).replace(/[^A-Za-z0-9._-]/g, "-").replace(/^\.+/, "");
   if (!safeId) return;
   const out = path.join(dir, safeId + ".json");
-  let prev = {};
-  try { prev = JSON.parse(fs.readFileSync(out, "utf8")); }
-  catch (e) {
-    /* keep a corrupt file rather than silently dropping the session history */
-    if (fs.existsSync(out)) { try { fs.renameSync(out, out + ".bad"); } catch {} }
+  /* Two sessions in one project can end at the same moment; without a lock the
+     later writer's read-modify-write drops the earlier one's recent[] entry.
+     The lock is advisory and self-healing: a stale one (crashed hook) is broken
+     after 10s, and failing to get it never blocks the session. */
+  const lock = out + ".lock";
+  let held = false;
+  for (let i = 0; i < 25 && !held; i++) {
+    try { fs.writeFileSync(lock, String(process.pid), { flag: "wx" }); held = true; }
+    catch {
+      try {
+        if (Date.now() - fs.statSync(lock).mtimeMs > 10000) fs.unlinkSync(lock);
+      } catch {}
+      if (!held) await new Promise(r => setTimeout(r, 120));
+    }
   }
-  const recent = [{ at: Date.now(), summary, prompts: prompts.slice(0, 8), files: [...files].slice(0, 12) }]
-    .concat((Array.isArray(prev.recent) ? prev.recent : []).slice(0, 2));
-  /* write-then-rename: the server watches this directory and re-sweeps on
-     change, so it must never observe a half-written file */
-  const tmp = out + "." + process.pid + ".tmp";
-  fs.writeFileSync(tmp, JSON.stringify({
-    id: proj.id, updated: Date.now(), cwd, summary, recent,
-  }, null, 2));
-  fs.renameSync(tmp, out);
+  try {
+    let prev = {};
+    try {
+      const parsed = JSON.parse(fs.readFileSync(out, "utf8"));
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) prev = parsed;
+    } catch {
+      /* keep a corrupt file rather than silently dropping the session history */
+      if (fs.existsSync(out)) {
+        try { fs.renameSync(out, `${out}.${Date.now()}.bad`); } catch {}
+      }
+    }
+    const recent = [{ at: Date.now(), summary, prompts: prompts.slice(0, 8), files: [...files].slice(0, 12) }]
+      .concat((Array.isArray(prev.recent) ? prev.recent : []).slice(0, 2));
+    /* write-then-rename: the server watches this directory and re-sweeps on
+       change, so it must never observe a half-written file */
+    const tmp = out + "." + process.pid + ".tmp";
+    fs.writeFileSync(tmp, JSON.stringify({
+      id: proj.id, updated: Date.now(), cwd, summary, recent,
+    }, null, 2));
+    fs.renameSync(tmp, out);
+  } finally {
+    if (held) { try { fs.unlinkSync(lock); } catch {} }
+  }
 }

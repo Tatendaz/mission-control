@@ -940,6 +940,9 @@ const tag = (t,k)=>{ const kk = SEVK[k] ? k : ""; return `<span class="sev ${kk}
 const safeUrl = u => /^https?:\/\//i.test(String(u||"")) ? esc(u) : "#";
 
 const hay = s => String(s ?? "").toLowerCase().replace(/"/g,"");
+/* the copied command is pasted into a shell: a path with a space or a $(…) in
+   it must arrive as one literal argument */
+const shq = s => "'" + String(s ?? "").replace(/'/g, `'\\''`) + "'";
 const relTime = p => p.days==null ? (p.last||"") : p.days===0 ? "today" : p.days+"d";
 const freshCls = p => {
   if (p.days==null) return "";
@@ -966,8 +969,8 @@ PROJECTS.forEach((p,i)=>{
   p.name = p.name || p.id || "untitled";
   p.path = p.path || "";
   p.desc = p.desc || "";
-  p.flags = Array.isArray(p.flags) ? p.flags : [];
-  p.next = Array.isArray(p.next) ? p.next : [];
+  p.flags = (Array.isArray(p.flags) ? p.flags : []).filter(f => Array.isArray(f) && f.length);
+  p.next = (Array.isArray(p.next) ? p.next : []).filter(n => n != null && n !== "");
   const [cd,cl] = HUES[hue(p.id)];
   const el = document.createElement("article");
   el.className = "entry";
@@ -987,7 +990,7 @@ PROJECTS.forEach((p,i)=>{
       <span class="acts">
         ${SRV && p.launch!==false ? `<button class="ic lch" aria-label="Start Claude on ${esc(p.name)} in Herdr" title="Open a Herdr space and start Claude on the next step">🐏</button>` : ""}
         <button class="ic pin" aria-label="Pin ${esc(p.name)}" aria-pressed="false" title="Pin to top">★</button>
-        <button class="ic copy" aria-label="Copy resume command for ${esc(p.name)}" title="Copy: cd ${esc(p.path)} &amp;&amp; claude">❯</button>
+        <button class="ic copy" aria-label="Copy resume command for ${esc(p.name)}" title="Copy: cd ${esc(shq(p.path))} &amp;&amp; claude">❯</button>
         <button class="ic del" aria-label="Move ${esc(p.name)} to Trash" title="Move to Trash">✕</button>
       </span>
     </div>
@@ -1017,7 +1020,7 @@ PROJECTS.forEach((p,i)=>{
     e.currentTarget.setAttribute("aria-pressed", pins.has(p.id));
     saveP(); vt(update);
   });
-  el.querySelector(".copy").addEventListener("click", e=>copyText(e.currentTarget, `cd ${p.path} && claude`, "❯"));
+  el.querySelector(".copy").addEventListener("click", e=>copyText(e.currentTarget, `cd ${shq(p.path)} && claude`, "❯"));
   const lb = el.querySelector(".lch");
   if (lb) lb.addEventListener("click", ()=>launchCard(p, lb));
 });
