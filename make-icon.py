@@ -5,11 +5,18 @@ Finds the squircle by background-diff bbox, re-composes it onto a transparent
 1024 canvas at Apple's ~80% content size, applies a rounded-rect alpha mask,
 and emits every iconset size. Needs Pillow; iconutil does the final .icns."""
 import sys, os, subprocess
-from PIL import Image, ImageDraw, ImageOps
+try:
+    from PIL import Image, ImageDraw, ImageOps
+except ImportError:
+    sys.exit("make-icon.py needs Pillow:  python3 -m venv venv && venv/bin/pip install pillow")
 
+if len(sys.argv) != 3:
+    sys.exit("usage: make-icon.py <render.png|jpg> <AppIconName>")
 src, name = sys.argv[1], sys.argv[2]
 im = Image.open(src).convert("RGB")
 w, h = im.size
+if w < 64 or h < 64:
+    sys.exit(f"{src} is {w}x{h}; need at least 64x64 (ideally a 1024+ square render)")
 bg = im.getpixel((6, 6))
 
 def diff(px):
@@ -25,6 +32,9 @@ for y in range(0, h, 4):
             if x > maxx: maxx = x
             if y < miny: miny = y
             if y > maxy: maxy = y
+if maxx <= minx or maxy <= miny:
+    sys.exit(f"no icon shape found in {src}: every pixel matches the corner background. "
+             "Expected a squircle render on a plain backdrop.")
 # drop soft drop-shadow fringe: inset a touch
 inset = int((maxx - minx) * 0.012)
 box = (minx + inset, miny + inset, maxx - inset, maxy - inset)
