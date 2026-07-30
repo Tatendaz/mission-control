@@ -27,3 +27,4 @@ jobs:
           cp config.example.json config.json
           cp board.template.html board.html
           node sweep.js --dry
+          test ! -f .cache.json   # --dry must write nothing

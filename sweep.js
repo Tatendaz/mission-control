@@ -134,7 +134,7 @@ function ghData() {
     } catch {}
   }
   prs = prs || []; inbox = inbox || [];
-  try { fs.writeFileSync(cacheFile, JSON.stringify({ prs, inbox, at: NOW })); } catch {}
+  if (!DRY) try { fs.writeFileSync(cacheFile, JSON.stringify({ prs, inbox, at: NOW })); } catch {}
   return { prs, inbox, stale };
 }
 
