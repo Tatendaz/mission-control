@@ -1,0 +1,56 @@
+{
+  "home": ".",
+  "boardHtml": "board.html",
+  "roots": ["~/code"],
+  "satelliteRoots": ["~/code/worktrees"],
+  "sessionsDir": "~/.claude/projects",
+  "inboxRepo": "you/ideas-inbox",
+  "ghOwner": "you",
+  "gh": "/opt/homebrew/bin/gh",
+  "git": "/usr/bin/git",
+  "herdr": "/opt/homebrew/bin/herdr",
+  "terminalApp": "iTerm",
+  "node": "/opt/homebrew/bin/node",
+  "port": 8765,
+  "sweepHour": 7,
+  "sweepMinute": 30,
+  "ignoreDirs": ["node_modules", "_archive", ".Trash", "dist", "build"],
+  "projects": [
+    {
+      "id": "app", "name": "acme-app", "path": "~/code/acme-app",
+      "label": "acme-app", "cat": "active", "git": true,
+      "desc": "The flagship web app. Next.js, Postgres, a queue worker.",
+      "next": ["Land the onboarding PR", "Fix the flaky signup test"]
+    },
+    {
+      "id": "api", "name": "acme-api", "path": "~/code/acme-api",
+      "label": "acme-api", "cat": "active", "git": true,
+      "okFlags": [["nothing needs you", "ok"]],
+      "desc": "The public REST API. Fastify, OpenAPI-first.",
+      "next": []
+    },
+    {
+      "id": "notes", "name": "notes", "path": "~/notes",
+      "label": "notes", "cat": "meta", "git": false,
+      "desc": "Second brain: weekly reviews, decision log, reading queue.",
+      "next": ["File the inbox ideas"]
+    },
+    {
+      "id": "ml", "name": "ml-experiments", "path": "~/code/ml-experiments",
+      "label": "ml-experiments", "cat": "active", "git": true, "parked": true,
+      "desc": "Fine-tuning and eval experiments.",
+      "next": ["Decide: resume or park until fall"]
+    },
+    {
+      "id": "attic", "name": "The attic", "path": "~/code",
+      "cat": "stale", "git": false, "aggregate": true, "last": "2023", "noLaunch": true,
+      "desc": "Directories no longer in play.",
+      "lastWork": "Nothing since 2023.",
+      "next": ["Rescue the uncommitted files, then archive"],
+      "members": ["old-portfolio", "hackathon-2021", "scraper-farm"]
+    }
+  ],
+  "prNotes": [
+    { "match": "onboarding", "note": "Your review, then merge" }
+  ]
+}

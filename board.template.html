@@ -1,0 +1,1344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0B0E14" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#F5F6F8" media="(prefers-color-scheme: light)">
+<title>Project Radar — 2026-07-29</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  /* Layout system: de-carded ledger. Structure comes from hairline rules and the numbered
+     left rail; the one deliberate exception is the board, which stays a card grid (12px).
+     Radius elsewhere only on controls (8px), code and chart data-ends (4px), tooltip (8px).
+     Severity is glyph + word, never a stripe or pill.
+     Accent validated via dataviz validator: dark #3F8AF0 on #121722, light #2563EB on #FFFFFF.
+     Identity hues (7, per project): validated in both modes; chip formula is low-mix tint
+     background + lightened same-hue foreground (GitHub label / Radix step-3/step-11 shape). */
+  :root {
+    color-scheme: light;
+    interpolate-size: allow-keywords;
+    --page:      #F5F6F8;
+    --surface:   #FFFFFF;
+    --ink-1:     #0E1116;
+    --ink-2:     #4A5361;
+    --ink-3:     #8A94A3;
+    --grid:      #E6E9EE;
+    --baseline:  #C9D0DA;
+    --border:    rgba(14,17,22,0.08);
+    --accent:    #2563EB;
+    --accent-on: #FFFFFF;
+    --accent-soft: rgba(37,99,235,0.08);
+    --good:      #0ca30c;
+    --warning:   #fab219;
+    --serious:   #ec835a;
+    --critical:  #d03b3b;
+    --wash:      rgba(14,17,22,0.035);
+    --shadow:    0 10px 28px rgba(37,99,235,0.08), 0 2px 8px rgba(14,17,22,0.05);
+    --display: "Space Grotesk", system-ui, -apple-system, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+    /* motion tokens: entrances decelerate, exits accelerate, one spring for personality */
+    --out: cubic-bezier(.2,0,0,1);
+    --in:  cubic-bezier(.3,0,.8,.15);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page:      #0B0E14;
+      --surface:   #121722;
+      --ink-1:     #EDF0F5;
+      --ink-2:     #9AA3B2;
+      --ink-3:     #66707F;
+      --grid:      #1D2431;
+      --baseline:  #2B3444;
+      --border:    rgba(160,180,220,0.10);
+      --accent:    #3F8AF0;
+      --accent-on: #0B0E14;
+      --accent-soft: rgba(63,138,240,0.12);
+      --wash:      rgba(160,180,220,0.05);
+      --shadow:    0 12px 30px rgba(0,0,0,0.40), 0 2px 8px rgba(0,0,0,0.30);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page:      #0B0E14;
+    --surface:   #121722;
+    --ink-1:     #EDF0F5;
+    --ink-2:     #9AA3B2;
+    --ink-3:     #66707F;
+    --grid:      #1D2431;
+    --baseline:  #2B3444;
+    --border:    rgba(160,180,220,0.10);
+    --accent:    #3F8AF0;
+    --accent-on: #0B0E14;
+    --accent-soft: rgba(63,138,240,0.12);
+    --wash:      rgba(160,180,220,0.05);
+    --shadow:    0 12px 30px rgba(0,0,0,0.40), 0 2px 8px rgba(0,0,0,0.30);
+  }
+
+  * { box-sizing: border-box; margin: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--page);
+    color: var(--ink-1);
+    font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding-bottom: 110px;
+  }
+  /* ambient layer: two soft blobs, barely-there, slow drift (paused under reduced motion) */
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    background: radial-gradient(880px 400px at 76% -120px, var(--accent-soft), transparent 62%);
+  }
+  body::after {
+    content: ""; position: fixed; z-index: -1; pointer-events: none;
+    left: -180px; bottom: -260px; width: 860px; height: 560px;
+    background: radial-gradient(closest-side, color-mix(in srgb, #8864C0 7%, transparent), transparent 72%);
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  ::selection { background: var(--accent); color: var(--accent-on); }
+
+  /* ── header ─────────────────────────────────────── */
+  header {
+    position: sticky; top: 0; z-index: 40;
+    background: color-mix(in srgb, var(--page) 82%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--grid);
+    padding: 12px 32px;
+    display: flex; align-items: center; gap: 22px; flex-wrap: wrap;
+  }
+  header .brand { display: flex; align-items: baseline; gap: 12px; white-space: nowrap; }
+  header h1 { font: 700 16px/1 var(--display); letter-spacing: -0.01em; }
+  header .date { font: 11.5px var(--mono); color: var(--ink-3); }
+  nav { display: flex; gap: 16px; flex-wrap: wrap; }
+  nav { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+  nav a { color: var(--ink-2); font-size: 13px; padding: 5px 10px; border-radius: 7px; white-space: nowrap; transition: color .15s var(--out), background .15s var(--out); }
+  nav a:hover { color: var(--ink-1); background: var(--accent-soft); }
+  nav a[aria-current="true"] { color: var(--ink-1); background: var(--accent-soft); font-weight: 600; }
+  .spacer { flex: 1; }
+  #search {
+    background: transparent; border: 1px solid var(--border); color: var(--ink-1);
+    border-radius: 8px; padding: 5px 10px; font: inherit; font-size: 13px; width: 180px;
+    transition: border-color .15s;
+  }
+  #search::placeholder { color: var(--ink-3); }
+  #search:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  #themeBtn {
+    background: transparent; border: 1px solid var(--border); color: var(--ink-2);
+    border-radius: 8px; padding: 5px 11px; font: inherit; font-size: 13px; cursor: pointer;
+    transition: color .15s, border-color .15s;
+  }
+  #themeBtn:hover { color: var(--ink-1); border-color: var(--baseline); }
+  #themeBtn:active { transform: translateY(1px); }
+
+  /* ── ledger scaffold: numbered rail + content ───── */
+  /* main is board-width; every other section constrains itself back to the ledger measure */
+  main { max-width: 1560px; margin: 0 auto; padding: 0 32px; }
+  section {
+    width: min(100%, 1076px); margin-inline: auto;
+    display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 0 60px;
+    padding: 62px 0 26px; scroll-margin-top: 68px;
+  }
+  section + section { border-top: 1px solid var(--grid); }
+  .kick {
+    position: sticky; top: 72px; align-self: start;
+    display: flex; gap: 12px; align-items: baseline;
+    font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: 0.14em;
+    color: var(--ink-3); padding-top: 10px;
+  }
+  .kick .kn { color: var(--accent); }
+  /* the board breaks out of the rail and the measure to fit the card wall */
+  #board { width: 100%; grid-template-columns: 1fr; }
+  #board .kick { position: static; padding: 0 0 18px; }
+  h2 { font: 700 30px/1.15 var(--display); letter-spacing: -0.025em; margin-bottom: 10px; }
+  .sub { color: var(--ink-2); font-size: 14.5px; max-width: 72ch; margin-bottom: 26px; }
+  .sub .chg-note { color: var(--ink-1); font-weight: 600; }
+  h3 { font: 650 15px/1.3 var(--display); margin: 40px 0 12px; }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  code {
+    background: var(--wash); border-radius: 4px; padding: 1px 5px;
+    font: 12.5px var(--mono);
+  }
+
+  /* ── severity: glyph + word, no pills, no stripes ─ */
+  .sev {
+    display: inline-flex; align-items: center; gap: 6px;
+    font: 600 10.5px var(--mono); text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--ink-2); white-space: nowrap;
+  }
+  .sev i { font-style: normal; font-size: 9px; line-height: 1; }
+  .sev.crit i { color: var(--critical); }
+  .sev.warn i { color: var(--warning); }
+  .sev.ok   i { color: var(--good); }
+
+  /* ── overview ───────────────────────────────────── */
+  #overview h2 { font-size: 42px; letter-spacing: -0.03em; max-width: 14ch; }
+  .lede { font-size: 17px; line-height: 1.6; color: var(--ink-2); max-width: 56ch; margin-top: 6px; }
+  .lede strong { color: var(--ink-1); font-weight: 650; }
+  .figures { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--grid); margin-top: 38px; }
+  .fig { padding: 20px 26px 8px 0; }
+  .fig + .fig { border-left: 1px solid var(--grid); padding-left: 26px; }
+  .fig .v { font: 700 48px/1.05 var(--display); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+  .fig .l { font-size: 13px; color: var(--ink-2); margin-top: 7px; }
+  .fig .s { font-size: 12px; color: var(--ink-3); margin-top: 1px; }
+
+  /* ── hazards: numbered rows, hairline rules ─────── */
+  .hz {
+    display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; gap: 0 24px;
+    padding: 20px 0; border-top: 1px solid var(--grid);
+  }
+  .hz-no { font: 600 12px var(--mono); color: var(--ink-3); padding-top: 3px; }
+  .hz b { font: 650 15.5px/1.35 var(--display); letter-spacing: -0.01em; display: block; margin-bottom: 6px; }
+  .hz p { font-size: 13.5px; color: var(--ink-2); max-width: 70ch; }
+  .hz .sev { padding-top: 4px; }
+
+  /* ── board: tabs, filters, sort, entries ────────── */
+  .tabs {
+    position: relative; display: flex; gap: 26px; align-items: center;
+    border-bottom: 1px solid var(--grid);
+  }
+  .tab {
+    background: none; border: none; padding: 6px 1px 12px;
+    font: 650 15px var(--display); letter-spacing: -0.01em; color: var(--ink-3);
+    cursor: pointer; transition: color .15s;
+  }
+  .tab:hover { color: var(--ink-2); }
+  .tab[aria-selected="true"] { color: var(--ink-1); }
+  .tab .n { font: 600 11px var(--mono); color: var(--ink-3); margin-left: 6px; }
+  .tind {
+    position: absolute; bottom: -1px; left: 0; height: 2px; width: 0;
+    background: var(--accent);
+    transition: translate .25s var(--out), width .25s var(--out);
+  }
+  #emptyTrash { margin-left: auto; margin-bottom: 8px; }
+
+  .filters { display: flex; flex-wrap: wrap; align-items: baseline; border-bottom: 1px solid var(--grid); margin-bottom: 20px; }
+  .fchip {
+    background: none; border: none; border-bottom: 2px solid transparent;
+    margin: 0 22px -1px 0; padding: 8px 1px 9px;
+    font: inherit; font-size: 13px; color: var(--ink-2); cursor: pointer;
+    transition: color .15s, border-color .15s;
+  }
+  .fchip:hover { color: var(--ink-1); }
+  .fchip[aria-pressed="true"] { color: var(--ink-1); font-weight: 650; border-bottom-color: var(--accent); }
+  .fchip .n { color: var(--ink-3); font-size: 11px; margin-left: 5px; font-family: var(--mono); }
+  .sortgrp { margin-left: auto; display: flex; align-items: baseline; gap: 2px; }
+  .sortgrp .lbl { font: 600 10.5px var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); margin-right: 12px; }
+  .schip {
+    background: none; border: none; border-bottom: 2px solid transparent;
+    margin: 0 0 -1px 14px; padding: 8px 1px 9px;
+    font: inherit; font-size: 12.5px; color: var(--ink-3); cursor: pointer;
+    transition: color .15s, border-color .15s;
+  }
+  .schip:hover { color: var(--ink-1); }
+  .schip[aria-pressed="true"] { color: var(--ink-1); font-weight: 650; border-bottom-color: var(--accent); }
+  #trashHint { font-size: 13px; color: var(--ink-3); margin: 14px 0 20px; max-width: 76ch; }
+
+  .entries { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
+  .tempty { grid-column: 1 / -1; padding: 40px 0 24px; color: var(--ink-3); font-size: 13.5px; }
+
+  /* identity color tokens per card: light-mode defaults, dark overrides below.
+     --cat-d / --cat-l are set inline per card from the validated 7-hue wheel. */
+  .entry {
+    --cat: var(--cat-l, var(--accent));
+    --cat-bg: color-mix(in oklab, var(--cat) 13%, var(--surface));
+    --cat-fg: var(--cat);
+    --cat-ring: color-mix(in oklab, var(--cat) 32%, transparent);
+    position: relative;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 15px 16px 10px; display: flex; flex-direction: column;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+    transition: translate .18s var(--out), border-color .18s, background-color .18s, opacity .25s;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .entry {
+      --cat: var(--cat-d, var(--accent));
+      --cat-bg: color-mix(in oklab, var(--cat) 22%, var(--surface));
+      --cat-fg: color-mix(in oklab, var(--cat) 58%, #F4F7FC);
+    }
+  }
+  :root[data-theme="dark"] .entry {
+    --cat: var(--cat-d, var(--accent));
+    --cat-bg: color-mix(in oklab, var(--cat) 22%, var(--surface));
+    --cat-fg: color-mix(in oklab, var(--cat) 58%, #F4F7FC);
+  }
+  /* hover: lift, hue-tinted ring and wash, pre-rendered shadow crossfade (cheap) */
+  .entry::after {
+    content: ""; position: absolute; inset: 0; border-radius: inherit; z-index: -1;
+    box-shadow: var(--shadow); opacity: 0; transition: opacity .18s; pointer-events: none;
+  }
+  @media (hover: hover) {
+    .entry:hover { translate: 0 -3px; border-color: var(--cat-ring); background: color-mix(in oklab, var(--cat) 4%, var(--surface)); }
+    .entry:hover::after { opacity: 1; }
+  }
+  .entry.hidden { display: none; }
+  .entry.dim { opacity: .78; }
+  .entry.dim:hover, .entry.dim:focus-within { opacity: 1; }
+
+  .entry .top { display: flex; align-items: flex-start; gap: 10px; }
+  .mono-tile {
+    flex: none; width: 33px; height: 33px; border-radius: 8px;
+    display: grid; place-items: center;
+    font: 700 14.5px var(--display);
+    background: var(--cat-bg); color: var(--cat-fg);
+    box-shadow: inset 0 0 0 1px var(--cat-ring);
+    position: relative;
+  }
+  .entry.chg .mono-tile::after {
+    content: ""; position: absolute; top: -3px; right: -3px; width: 7px; height: 7px;
+    border-radius: 50%; background: var(--warning); box-shadow: 0 0 0 2px var(--surface);
+  }
+  .entry .tt { min-width: 0; flex: 1; }
+  .entry h4 { font: 650 16.5px/1.25 var(--display); letter-spacing: -0.015em; overflow-wrap: anywhere; }
+  .entry .path { font: 11px var(--mono); color: var(--ink-3); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .entry .when { font: 11px var(--mono); color: var(--ink-3); white-space: nowrap; padding-top: 2px; transition: opacity .15s; }
+  .entry .when.f1 { color: #8a6100; }
+  .entry .when.f2 { color: #a04322; }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .entry .when.f1 { color: var(--warning); }
+    :root:where(:not([data-theme="light"])) .entry .when.f2 { color: var(--serious); }
+  }
+  :root[data-theme="dark"] .entry .when.f1 { color: var(--warning); }
+  :root[data-theme="dark"] .entry .when.f2 { color: var(--serious); }
+  .entry.pinned .when::before { content: "★ "; color: var(--accent); }
+
+  /* hover actions replace the timestamp corner */
+  .acts {
+    position: absolute; top: 11px; right: 12px; display: flex; gap: 4px;
+    opacity: 0; pointer-events: none; transition: opacity .15s;
+  }
+  .entry:hover .acts, .entry:focus-within .acts { opacity: 1; pointer-events: auto; }
+  .entry:hover .when, .entry:focus-within .when { opacity: 0; }
+  .entry.trashed:hover .when { opacity: 1; }
+  .ic {
+    width: 26px; height: 26px; border-radius: 6px; padding: 0;
+    border: 1px solid var(--border); background: var(--surface); color: var(--ink-2);
+    font: 600 11px var(--mono); display: grid; place-items: center; cursor: pointer;
+    transition: color .12s, border-color .12s, translate .12s;
+  }
+  .ic:hover { color: var(--ink-1); border-color: var(--baseline); }
+  .ic:active { translate: 0 1px; }
+  .ic:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .ic.del:hover { color: var(--critical); border-color: color-mix(in srgb, var(--critical) 40%, var(--border)); }
+  .ic.pin[aria-pressed="true"] { color: var(--accent); }
+  .ic.copy.okd { color: var(--good); }
+  .entry.trashed .acts { display: none; }
+
+  .e-flags { display: flex; gap: 4px 12px; flex-wrap: wrap; margin: 2px 0 9px; }
+  .e-flags .sev { font-size: 10px; white-space: normal; line-height: 1.5; }
+  .e-flags .sev i { flex: none; }
+  .entry .desc { font-size: 13.5px; line-height: 1.55; color: var(--ink-2); margin: 9px 0 10px; }
+  .next-a {
+    font: 600 11.5px var(--mono); color: var(--ink-2); margin: 0 0 10px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .next-a::before { content: "→ "; color: var(--accent); }
+  .entry details { border-top: 1px solid var(--grid); margin-top: auto; }
+  .entry summary {
+    cursor: pointer; font-size: 12.5px; color: var(--ink-2);
+    list-style: none; user-select: none; padding: 9px 0 7px;
+  }
+  .entry summary:hover { color: var(--accent); }
+  .entry summary::-webkit-details-marker { display: none; }
+  .entry summary::before { content: "▸ "; color: var(--ink-3); }
+  .entry details[open] summary::before { content: "▾ "; }
+  .entry .body { padding-bottom: 9px; font-size: 13px; }
+  .entry .body b { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-3); font-weight: 650; display: block; margin: 8px 0 3px; }
+  .entry .body ul { padding-left: 17px; }
+  .entry .body li { margin: 3px 0; color: var(--ink-2); }
+  .entry .body li::marker { color: var(--accent); }
+
+  /* trash presentation */
+  .entry.trashed { filter: grayscale(.85); opacity: .65; }
+  .entry.trashed:hover, .entry.trashed:focus-within { opacity: .92; }
+  .entry.trashed details, .entry.trashed .next-a { display: none; }
+  .tacts { display: none; border-top: 1px solid var(--grid); margin-top: auto; padding: 10px 0 4px; align-items: center; gap: 8px; }
+  .entry.trashed .tacts { display: flex; }
+  .tmeta { font: 10.5px var(--mono); color: var(--ink-3); margin-left: auto; }
+  .btn {
+    font: 600 12px var(--display); letter-spacing: 0; white-space: nowrap;
+    border: 1px solid var(--border); background: var(--surface); color: var(--ink-1);
+    border-radius: 8px; padding: 5px 12px; cursor: pointer;
+    transition: border-color .15s, color .15s, background-color .15s;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .btn.danger:hover { color: var(--critical); border-color: color-mix(in srgb, var(--critical) 45%, var(--border)); }
+  .btn.danger.armed {
+    color: var(--critical); border-color: color-mix(in srgb, var(--critical) 45%, var(--border));
+    background: color-mix(in srgb, var(--critical) 10%, var(--surface));
+  }
+
+  /* undo toast */
+  #toast {
+    position: fixed; left: 50%; bottom: 26px; translate: -50% 0; z-index: 80;
+    display: flex; align-items: center; gap: 16px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: var(--shadow); padding: 11px 15px; font-size: 13px;
+    transition: opacity .3s var(--out), translate .3s var(--out), display .3s allow-discrete;
+  }
+  #toast[hidden] { display: none; opacity: 0; translate: -50% 14px; }
+  @starting-style { #toast { opacity: 0; translate: -50% 14px; } }
+  #toastUndo {
+    background: none; border: none; padding: 0; font: 650 13px var(--display);
+    color: var(--accent); cursor: pointer;
+  }
+  #toastUndo:hover { text-decoration: underline; }
+
+  /* ── recency bar-table (dataviz spec, frameless) ── */
+  .chart .title { font: 650 15px/1.3 var(--display); }
+  .chart .note { font-size: 12.5px; color: var(--ink-3); margin: 3px 0 18px; }
+  .row {
+    display: grid; grid-template-columns: 176px 1fr 92px; align-items: center;
+    gap: 12px; padding: 3px 0;
+  }
+  .row:hover { background: var(--wash); }
+  .row .name { font-size: 12.5px; color: var(--ink-2); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .track { position: relative; height: 13px; border-left: 2px solid var(--baseline); }
+  .row .bar {
+    position: absolute; left: 0; top: 0; height: 13px; min-width: 2px;
+    background: var(--accent); border-radius: 0 4px 4px 0;
+  }
+  .row .val { font: 12px var(--mono); color: var(--ink-2); display: flex; align-items: center; gap: 8px; }
+  .row .val .stale {
+    display: inline-flex; align-items: center; gap: 5px;
+    font: 600 9.5px var(--mono); text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-2);
+  }
+  .row .val .stale::before { content: "◆"; color: var(--warning); font-size: 8px; }
+  #tooltip {
+    position: fixed; z-index: 60; pointer-events: none; display: none;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: var(--shadow); padding: 8px 12px; max-width: 300px;
+  }
+  #tooltip .t1 { font-size: 12.5px; font-weight: 650; }
+  #tooltip .t2 { font-size: 12px; color: var(--ink-2); }
+
+  /* ── tables: frameless, single-direction rules ──── */
+  .twrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--ink-3); font-weight: 650; padding: 8px 16px 8px 0; border-bottom: 1px solid var(--baseline);
+    white-space: nowrap;
+  }
+  td { padding: 11px 16px 11px 0; border-bottom: 1px solid var(--grid); vertical-align: top; color: var(--ink-2); }
+  td.num { white-space: nowrap; }
+  td:first-child { color: var(--ink-1); font-weight: 550; white-space: nowrap; }
+  tr:last-child td { border-bottom: none; }
+  tbody tr { transition: background .12s; }
+  tbody tr:hover { background: var(--wash); }
+
+  /* ── duplicate clusters ─────────────────────────── */
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 56px; }
+  .group { padding: 16px 0 6px; }
+  .group h4 { font: 650 14.5px/1.3 var(--display); margin-bottom: 8px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .group ul { padding-left: 17px; }
+  .group li { font-size: 13.5px; color: var(--ink-2); margin: 4px 0; }
+  .group li::marker { color: var(--accent); }
+  .group .k { color: var(--ink-1); font-weight: 600; }
+
+  /* ── the plan: numbered stacked layers ──────────── */
+  .layers { border-top: 1px solid var(--grid); }
+  .layer {
+    display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 0 24px;
+    padding: 22px 0; border-bottom: 1px solid var(--grid);
+  }
+  .layer .l-no { font: 600 13px var(--mono); color: var(--accent); padding-top: 3px; }
+  .layer h4 { font: 700 16px/1.3 var(--display); letter-spacing: -0.01em; margin-bottom: 6px; }
+  .layer p { font-size: 13.5px; color: var(--ink-2); max-width: 74ch; }
+  .layer .k { color: var(--ink-1); font-weight: 600; }
+
+  .caution { margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--grid); font-size: 13.5px; color: var(--ink-2); max-width: 76ch; }
+  .caution b { color: var(--ink-1); }
+
+  /* ── checklist ──────────────────────────────────── */
+  .check { border-top: 1px solid var(--grid); }
+  .check label {
+    display: flex; gap: 12px; align-items: flex-start;
+    padding: 13px 14px; margin: 0 -14px;
+    font-size: 14px; cursor: pointer; color: var(--ink-1);
+    border-bottom: 1px solid var(--grid);
+    transition: background .12s;
+  }
+  .check label:hover { background: var(--wash); }
+  .check input { margin-top: 4px; accent-color: var(--accent); width: 15px; height: 15px; }
+  .check label.done { color: var(--ink-3); text-decoration: line-through; }
+  .check .why { display: block; font-size: 12.5px; color: var(--ink-3); text-decoration: none; }
+  #checkCount { font: 12.5px var(--mono); color: var(--ink-3); margin-top: 14px; }
+
+  footer {
+    max-width: 1140px; margin: 40px auto 0; padding: 20px 32px 0;
+    border-top: 1px solid var(--grid);
+    color: var(--ink-3); font-size: 12.5px;
+  }
+  footer a { color: var(--ink-3); text-decoration: underline; }
+  footer p + p { margin-top: 4px; }
+
+  /* confetti-lite: fired once when the checklist completes */
+  .pop {
+    position: fixed; width: 7px; height: 7px; border-radius: 2px; z-index: 90; pointer-events: none;
+    animation: pop .8s var(--out) forwards;
+  }
+  @keyframes pop { from { translate: 0 0; opacity: 1; } to { translate: var(--dx) var(--dy); opacity: 0; scale: .4; } }
+
+  /* ── motion (triggered, guarded; never looping on content) ── */
+  @media (prefers-reduced-motion: no-preference) {
+    #overview .content { animation: rise .55s cubic-bezier(.16,1,.3,1) both; }
+    @supports (animation-timeline: view()) {
+      .hz { animation: rise linear both; animation-timeline: view(); animation-range: entry 0% entry 28%; }
+    }
+    /* staggered card entrance, first pageview of the session only (body.first set by JS).
+       Pure CSS timing: nothing holds cards hidden waiting on a frame, so even a
+       throttled background tab can never show a blank board. --i is visual order. */
+    body.first .entry {
+      animation: rise .5s var(--out) backwards;
+      animation-delay: calc(min(var(--i, 0), 8) * 45ms);
+    }
+    /* details expand to auto height (Chrome; harmless elsewhere) */
+    .entry details::details-content {
+      height: 0; overflow: clip;
+      transition: height .3s var(--out), content-visibility .3s allow-discrete;
+    }
+    .entry details[open]::details-content { height: auto; }
+    /* ambient drift, imperceptible cycle lengths */
+    body::before { animation: drift1 70s linear infinite alternate; }
+    body::after  { animation: drift2 85s linear infinite alternate; }
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+  @keyframes drift1 { to { translate: -44px 26px; } }
+  @keyframes drift2 { to { translate: 64px -38px; scale: 1.12; } }
+
+  @media (max-width: 940px) {
+    section { grid-template-columns: 1fr; gap: 0; padding-top: 46px; }
+    .kick { position: static; padding: 0 0 18px; }
+    .cols { grid-template-columns: 1fr; }
+    .hz { grid-template-columns: 40px minmax(0, 1fr); }
+    .hz .sev { grid-column: 2; padding: 8px 0 0; }
+    .sortgrp { margin-left: 0; }
+  }
+  @media (hover: none) {
+    .acts { opacity: 1; pointer-events: auto; position: static; margin-left: auto; }
+    .entry .when { display: none; }
+  }
+  @media (max-width: 640px) {
+    .row { grid-template-columns: 112px 1fr 84px; }
+    header { padding: 10px 16px; }
+    main { padding: 0 16px; }
+    footer { padding: 20px 16px 0; }
+    #overview h2 { font-size: 32px; }
+    .figures { grid-template-columns: 1fr 1fr; }
+    .fig + .fig { border-left: none; padding-left: 0; }
+    .fig { padding: 14px 20px 8px 0; }
+    .fig .v { font-size: 34px; }
+  }
+  /* ── tabbed views: board front and center, the rest behind the nav ── */
+  main > section { display: none; }
+  main > section.on { display: block; border-top: none; }
+  main > section.on { animation: viewin .28s var(--out); }
+  @keyframes viewin { from { opacity: 0; transform: translateY(6px); } }
+  @media (prefers-reduced-motion: reduce) { main > section.on { animation: none; } }
+
+  /* mission control: sweep button, live agent dots, launch, flash, refresh pill */
+  #sweepBtn {
+    font: 500 12.5px var(--sans); color: var(--ink-2); background: none;
+    border: 1px solid var(--grid); border-radius: 8px; padding: 6px 12px; cursor: pointer;
+  }
+  #sweepBtn:hover { color: var(--ink-1); border-color: var(--baseline); }
+  #sweepBtn:disabled { opacity: .55; cursor: progress; }
+  .mono-tile { position: relative; }
+  .live {
+    position: absolute; top: -4px; right: -4px; width: 10px; height: 10px;
+    border-radius: 50%; border: 2px solid var(--surface); background: var(--ink-3);
+  }
+  .live.working { background: #3F8AF0; }
+  .live.blocked { background: #b8860b; }
+  .live.idle, .live.done { background: #178E68; }
+  @media (prefers-reduced-motion: no-preference) {
+    .live.working { animation: livepulse 1.6s var(--out) infinite; }
+    .live.blocked { animation: livepulse 1.1s var(--out) infinite; }
+    @keyframes livepulse { 50% { transform: scale(1.35); } }
+  }
+  .entry.idea .mono-tile { font-size: 12px; letter-spacing: -.02em; }
+  .ic.busy { opacity: .5; pointer-events: none; }
+  #flash {
+    position: fixed; left: 50%; bottom: 26px; translate: -50% 0; z-index: 60;
+    font: 500 13px var(--sans); color: var(--ink-1); background: var(--surface-2, var(--surface));
+    border: 1px solid var(--baseline); border-radius: 10px; padding: 10px 16px;
+    box-shadow: 0 8px 30px rgb(0 0 0 / .25);
+  }
+  #flash[hidden] { display: none; }
+  #fresh {
+    position: fixed; left: 50%; top: 64px; translate: -50% 0; z-index: 60; cursor: pointer;
+    font: 600 12.5px var(--sans); color: #fff; background: #2563EB; border: none;
+    border-radius: 999px; padding: 8px 16px; box-shadow: 0 8px 30px rgb(37 99 235 / .35);
+  }
+  #fresh[hidden] { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>Project Radar</h1>
+    <span class="date"><!-- SWEEP:STAMP -->
+Swept Jul 30, 08:00
+<!-- /SWEEP:STAMP --></span>
+  </div>
+  <nav id="views" aria-label="Views">
+    <a href="#board" data-view="board" aria-current="true">Board</a>
+    <a href="#overview" data-view="overview">Overview</a>
+    <a href="#hazards" data-view="hazards">Hazards</a>
+    <a href="#recency" data-view="recency">Recency</a>
+    <a href="#prs" data-view="prs">PRs</a>
+  </nav>
+  <span class="spacer"></span>
+  <button id="sweepBtn" title="Re-sweep repos, PRs and inbox now" hidden>Sweep</button>
+  <input id="search" type="search" placeholder="Search projects  /" aria-label="Search projects">
+  <button id="themeBtn" title="Toggle light and dark (t)">Theme</button>
+</header>
+
+<main>
+
+<!-- ═══ 01 OVERVIEW ═══ -->
+<section id="overview" style="border-top:none">
+  <div class="kick"><span class="kn">01</span>Overview</div>
+  <div class="content">
+    <h2>Where you stand</h2>
+    <!-- SWEEP:OVERVIEW -->
+
+    <p class="lede">Assembled from a live sweep of your repos, open pull requests, Claude Code session history and the inbox. No manual input. <strong>Six workstreams, measured.</strong></p>
+    <div class="figures">
+      <div class="fig"><div class="v">6</div><div class="l">active workstreams</div><div class="s">5 git repos, 1 working folder</div></div>
+      <div class="fig"><div class="v">3</div><div class="l">open pull requests</div><div class="s">across 2 repositories</div></div>
+      <div class="fig"><div class="v">2</div><div class="l">repos holding un-rescued work</div><div class="s">uncommitted or unpushed changes</div></div>
+      <div class="fig"><div class="v">8</div><div class="l">stale or junk directories</div><div class="s">2019 to 2023, plus empties and duplicates</div></div>
+    </div>
+<!-- /SWEEP:OVERVIEW -->
+  </div>
+</section>
+
+<!-- ═══ 02 HAZARDS ═══ -->
+<section id="hazards">
+  <div class="kick"><span class="kn">02</span>Hazards</div>
+  <div class="content">
+    <h2>Where work goes missing</h2>
+    <p class="sub">Where the redone work actually comes from: places where your newest work is not where you would look for it. Regenerated on every sweep.</p>
+    <!-- SWEEP:HAZARDS -->
+
+    <div class="hazards">
+      <div class="hz">
+        <div class="hz-no">01</div>
+        <div>
+          <b>Newest acme-app work lives in a satellite clone</b>
+          <p>The most recent commit (Jul 29, <code>feat/onboarding</code>) is in <code>~/code/worktrees/acme-app</code>, not the primary checkout, which last moved Jul 24. Anyone opening the primary sees stale state.</p>
+        </div>
+        <span class="sev crit"><i>▲</i>critical</span>
+      </div>
+      <div class="hz">
+        <div class="hz-no">02</div>
+        <div>
+          <b>build-log: 1 unpushed commit</b>
+          <p>On <code>draft/agents-post</code> in <code>~/code/build-log</code>. That work exists on this disk only until it is pushed.</p>
+        </div>
+        <span class="sev warn"><i>◆</i>warning</span>
+      </div>
+    </div>
+<!-- /SWEEP:HAZARDS -->
+  </div>
+</section>
+
+<!-- ═══ 03 BOARD ═══ -->
+<section id="board">
+  <div class="kick"><span class="kn">03</span>Board</div>
+  <div class="content">
+    <!-- SWEEP:BOARDHEAD -->
+    <h2>Six workstreams</h2>
+<!-- /SWEEP:BOARDHEAD -->
+    <p class="sub" id="boardSub">One card per workstream, built from git, pull requests, and session logs. Hover a card to send it to Herdr, pin it, copy a resume command, or move it to Trash. Expand a card for the last session and next steps.</p>
+    <div class="tabs" role="tablist" aria-label="Board views">
+      <button class="tab" role="tab" id="tabBoard" aria-selected="true" data-tab="board">Board<span class="n" id="nBoard"></span></button>
+      <button class="tab" role="tab" id="tabInbox" aria-selected="false" data-tab="inbox">Inbox<span class="n" id="nInbox"></span></button>
+      <button class="tab" role="tab" id="tabTrash" aria-selected="false" data-tab="trash">Trash<span class="n" id="nTrash"></span></button>
+      <span class="tind" aria-hidden="true"></span>
+      <button id="emptyTrash" class="btn danger" hidden>Empty trash</button>
+    </div>
+    <div class="filters" id="filters" role="group" aria-label="Filter projects"></div>
+    <p id="trashHint" hidden>Deleted cards keep their data. Restore puts one back on the board; delete forever hides it for good, even after the radar regenerates.</p>
+    <p id="inboxHint" hidden>Spoken ideas from the watch, straight off the ideas-inbox repo. Open one on GitHub, or copy its close command once you have filed it. New captures appear on the next sweep.</p>
+    <div class="entries" id="boardGrid">
+      <div class="tempty" id="tempty" hidden>Trash is empty. Deleted cards land here and stay until you delete them forever.</div>
+      <div class="tempty" id="iempty" hidden>Inbox zero. Say "Hey Siri, Idea" to the watch and it lands here on the next sweep.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 04 RECENCY ═══ -->
+<section id="recency">
+  <div class="kick"><span class="kn">04</span>Recency</div>
+  <div class="content">
+    <h2>What has gone quiet</h2>
+    <p class="sub">How long since each live workstream was last touched. Hover a row for the date and what happened there.</p>
+    <div class="chart">
+      <div class="title">Days since last touch</div>
+      <div class="note">From session timestamps and git commits, refreshed on every sweep. The <span style="font-weight:650;color:var(--ink-1)">stale</span> mark means untouched for more than two weeks.</div>
+      <div id="recencyRows"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 05 PULL REQUESTS ═══ -->
+<section id="prs">
+  <div class="kick"><span class="kn">05</span>Pull requests</div>
+  <div class="content">
+    <!-- SWEEP:PRS -->
+
+    <h2>Three are waiting on you</h2>
+    <p class="sub">Across two repositories. The oldest ones are blocked on decisions, not code.</p>
+    <div class="twrap">
+      <table>
+        <thead><tr><th>Repo</th><th>Pull request</th><th>Since</th><th>Waiting on</th></tr></thead>
+        <tbody>
+          <tr><td class="num">acme-app</td><td><a href="#">feat: onboarding empty-state polish (#41)</a></td><td class="num">Jul 27</td><td>Your review, then merge</td></tr>
+          <tr><td class="num">acme-app</td><td><a href="#">fix: rate-limit the export endpoint (#39)</a></td><td class="num">Jul 25</td><td>Review and merge</td></tr>
+          <tr><td class="num">acme-api</td><td><a href="#">chore: bump to node 22 (#12)</a></td><td class="num">Jul 20</td><td>Review and merge</td></tr>
+        </tbody>
+      </table>
+    </div>
+<!-- /SWEEP:PRS -->
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <!-- SWEEP:FOOTER -->
+  <p>Swept Jul 30, 08:00 from 9 git checkouts, an open-PR search, the ideas inbox, and 14 Claude Code session folders.</p>
+<!-- /SWEEP:FOOTER -->
+  <p>Generated by <a href="https://github.com/Tatendaz/mission-control">mission-control</a>. The board maintains itself.</p>
+</footer>
+
+<div id="tooltip" role="tooltip"></div>
+<div id="toast" role="status" aria-live="polite" hidden><span id="toastMsg"></span><button id="toastUndo">Undo</button></div>
+
+<script>
+/* ── data (regenerated by radar/sweep.js; edit config.json, not this) ── */
+/* SWEEP:DATA */
+const SWEPT = { at: 1785400000000, human: "Jul 30, 08:00" };
+const PROJECTS = [
+  {
+    "id": "app",
+    "name": "acme-app",
+    "path": "~/code/acme-app",
+    "cat": "active",
+    "last": "Jul 29",
+    "days": 1,
+    "desc": "The flagship web app. Next.js, Postgres, a queue worker, deployed on Fly.",
+    "flags": [
+      [
+        "2 open PRs",
+        ""
+      ],
+      [
+        "newest work in worktrees clone",
+        "crit"
+      ]
+    ],
+    "lastWork": "Last commit Jul 29 on feat/onboarding: \"polish the empty states\".",
+    "next": [
+      "Land the onboarding PR",
+      "Fix the flaky signup test"
+    ],
+    "label": "acme-app",
+    "launch": true
+  },
+  {
+    "id": "api",
+    "name": "acme-api",
+    "path": "~/code/acme-api",
+    "cat": "active",
+    "last": "Jul 28",
+    "days": 2,
+    "desc": "The public REST API. Fastify, OpenAPI-first, deployed alongside the app.",
+    "flags": [
+      [
+        "nothing needs you",
+        "ok"
+      ]
+    ],
+    "lastWork": "Last commit Jul 28 on main: \"cut v1.4.2\".",
+    "next": [],
+    "label": "acme-api",
+    "launch": true
+  },
+  {
+    "id": "blog",
+    "name": "build-log",
+    "path": "~/code/build-log",
+    "cat": "active",
+    "last": "Jul 18",
+    "days": 12,
+    "desc": "The engineering blog. Astro, deployed on Pages.",
+    "flags": [
+      [
+        "1 unpushed commit",
+        "warn"
+      ]
+    ],
+    "lastWork": "Last commit Jul 18 on draft/agents-post: \"first full draft\".",
+    "next": [
+      "Publish the agents post"
+    ],
+    "label": "build-log",
+    "launch": true
+  },
+  {
+    "id": "notes",
+    "name": "notes",
+    "path": "~/notes",
+    "cat": "meta",
+    "last": "Jul 30",
+    "days": 0,
+    "desc": "Second brain: weekly reviews, decision log, reading queue.",
+    "flags": [],
+    "lastWork": "Session Jul 30: weekly review.",
+    "next": [
+      "File the inbox ideas"
+    ],
+    "label": "notes",
+    "launch": true
+  },
+  {
+    "id": "ml",
+    "name": "ml-experiments",
+    "path": "~/code/ml-experiments",
+    "cat": "active",
+    "last": "Jun 26",
+    "days": 34,
+    "desc": "Fine-tuning and eval experiments. GPU box lives in the closet.",
+    "flags": [
+      [
+        "paused 34d",
+        "warn"
+      ]
+    ],
+    "lastWork": "Last commit Jun 26 on main: \"eval harness v2\".",
+    "next": [
+      "Decide: resume or park until fall"
+    ],
+    "label": "ml-experiments",
+    "launch": true
+  },
+  {
+    "id": "attic",
+    "name": "The attic, 2019 to 2023",
+    "path": "~/code",
+    "cat": "stale",
+    "last": "2023",
+    "days": null,
+    "desc": "Eight directories no longer in play: two hackathon apps, an old portfolio, assorted scrapers.",
+    "flags": [
+      [
+        "2 hold uncommitted files",
+        "warn"
+      ]
+    ],
+    "lastWork": "Nothing since 2023.",
+    "next": [
+      "Rescue the uncommitted files, then archive"
+    ],
+    "label": "attic",
+    "launch": false
+  }
+];
+const INBOX = [
+  {
+    "n": 7,
+    "title": "Idea: weekly changelog email generated from merged PRs",
+    "url": "https://github.com/you/ideas-inbox/issues/7",
+    "created": "Jul 29",
+    "days": 1
+  },
+  {
+    "n": 6,
+    "title": "Try agent teams on the api refactor",
+    "url": "https://github.com/you/ideas-inbox/issues/6",
+    "created": "Jul 28",
+    "days": 2
+  }
+];
+const REC = [["notes",0,"Jul 30","Weekly review session"],["acme-app",1,"Jul 29","Onboarding polish, PR open"],["acme-api",2,"Jul 28","v1.4.2 cut and shipped"],["build-log",12,"Jul 18","Agents post drafted, unpublished"],["ml-experiments",34,"Jun 26","Eval harness v2, then silence"]];
+/* /SWEEP:DATA */
+const INBOX_REPO = "you/ideas-inbox";
+
+const CATS = [ ["all","All"], ["active","Active"], ["job","Job and career"], ["meta","Meta and ideas"], ["stale","Stale"], ["junk","Junk"] ];
+
+/* identity hue wheel: 6 validated pairs [dark base, light base], in interleaved
+   order (Cobalt, Citron, Iris, Jade, Rose, Lagoon) so wheel-consecutive hues,
+   which land on side-by-side cards, stay maximally separated. Validator passes
+   both modes on the adjacent-pair model; the CVD warn band is covered because
+   every tile ships with its letter and the project name (secondary encoding).
+   Assignment is fixed by PROJECTS order, the offset keeps hues stable as projects are added. */
+const HUES = [
+  ["#3F8AF0","#2563EB"], ["#A29834","#838014"], ["#8864C0","#6840A4"],
+  ["#178E68","#007654"], ["#CB6784","#B84562"], ["#2DA6B9","#007A99"]
+];
+
+/* ── persistent state ─────────────────────────────── */
+const TKEY = "radar-tombstones-v1";   /* {id:{d:ms, purged?:1}} survives regeneration */
+const PKEY = "radar-pins-v1";
+const SKEY = "radar-sort-v1";
+const LKEY = "radar-seen-v1";
+const store = k => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } };
+let tombs = store(TKEY) || {};
+let pins  = new Set(store(PKEY) || []);
+let sortMode = localStorage.getItem(SKEY) || "attention";
+let activeCat = "all";
+let tab = "board";
+const saveT = () => localStorage.setItem(TKEY, JSON.stringify(tombs));
+const saveP = () => localStorage.setItem(PKEY, JSON.stringify([...pins]));
+
+const RM = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const SRV = location.protocol.startsWith("http");   /* served by mission control, not a bare file */
+const vt = fn => { if (RM || !document.startViewTransition) { fn(); return; } document.startViewTransition(fn); };
+
+/* ── board render (cards built once, then shown/hidden/reordered) ── */
+const grid = document.getElementById("boardGrid");
+const GLYPH = { crit:"▲", warn:"◆", ok:"●" };
+const tag = (t,k)=>`<span class="sev ${k||""}">${k?`<i>${GLYPH[k]}</i>`:""}${t}</span>`;
+const esc = s => s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+
+const relTime = p => p.days==null ? (p.last||"") : p.days===0 ? "today" : p.days+"d";
+const freshCls = p => {
+  if (p.days==null) return "";
+  if (p.flags.some(f=>f[0].includes("paused"))) return "";   /* intentional pause stays gray */
+  return p.days>21 ? "f2" : p.days>7 ? "f1" : "";
+};
+
+const cardEls = new Map();
+PROJECTS.forEach((p,i)=>{
+  const [cd,cl] = HUES[(i+5)%6];
+  const el = document.createElement("article");
+  el.className = "entry";
+  el.dataset.cat = p.cat;
+  el.dataset.id = p.id;
+  el.dataset.text = (p.name+" "+p.path+" "+p.desc+" "+p.next.join(" ")).toLowerCase().replace(/"/g,"");
+  el.style.cssText = `--cat-d:${cd};--cat-l:${cl};view-transition-name:vt-${p.id}`;
+  if (p.cat==="stale" || p.cat==="junk" || p.flags.some(f=>f[0].includes("paused"))) el.classList.add("dim");
+  el.innerHTML = `
+    <div class="top">
+      <span class="mono-tile" aria-hidden="true">${(p.name[0]||"?").toUpperCase()}<span class="live" hidden></span></span>
+      <div class="tt">
+        <h4>${esc(p.name)}</h4>
+        <div class="path">${p.path}</div>
+      </div>
+      <span class="when ${freshCls(p)}" ${p.last?`title="Last touched ${p.last}"`:""}>${relTime(p)}</span>
+      <span class="acts">
+        ${SRV && p.launch!==false ? `<button class="ic lch" aria-label="Start Claude on ${esc(p.name)} in Herdr" title="Open a Herdr space and start Claude on the next step">🐏</button>` : ""}
+        <button class="ic pin" aria-label="Pin ${esc(p.name)}" aria-pressed="false" title="Pin to top">★</button>
+        <button class="ic copy" aria-label="Copy resume command for ${esc(p.name)}" title="Copy: cd ${p.path} &amp;&amp; claude">❯</button>
+        <button class="ic del" aria-label="Move ${esc(p.name)} to Trash" title="Move to Trash">✕</button>
+      </span>
+    </div>
+    <div class="desc">${p.desc}</div>
+    ${p.flags.length?`<div class="e-flags">${p.flags.map(f=>tag(f[0],f[1])).join("")}</div>`:""}
+    ${p.next.length?`<div class="next-a" title="${esc(p.next[0])}">${esc(p.next[0])}</div>`:""}
+    <details>
+      <summary>Details${p.next.length?` (${p.next.length})`:""}</summary>
+      <div class="body">
+        ${p.lastWork?`<b>Last session</b>${p.lastWork}`:""}
+        ${p.next.length?`<b>Next steps</b><ul>${p.next.map(n=>`<li>${n}</li>`).join("")}</ul>`:""}
+      </div>
+    </details>
+    <div class="tacts">
+      <button class="btn restore">Restore</button>
+      <button class="btn danger forever">Delete forever</button>
+      <span class="tmeta"></span>
+    </div>`;
+  grid.appendChild(el);
+  cardEls.set(p.id, el);
+
+  el.querySelector(".del").addEventListener("click", ()=> delCard(p.id));
+  el.querySelector(".restore").addEventListener("click", ()=>{ delete tombs[p.id]; saveT(); vt(update); });
+  el.querySelector(".forever").addEventListener("click", e=> armBtn(e.currentTarget, "Click again", ()=>{ tombs[p.id] = { ...(tombs[p.id]||{d:Date.now()}), purged:1 }; saveT(); vt(update); }));
+  el.querySelector(".pin").addEventListener("click", e=>{
+    pins.has(p.id) ? pins.delete(p.id) : pins.add(p.id);
+    e.currentTarget.setAttribute("aria-pressed", pins.has(p.id));
+    saveP(); vt(update);
+  });
+  el.querySelector(".copy").addEventListener("click", e=>{
+    const b = e.currentTarget;
+    navigator.clipboard.writeText(`cd ${p.path} && claude`).then(()=>{
+      b.textContent = "✓"; b.classList.add("okd");
+      setTimeout(()=>{ b.textContent = "❯"; b.classList.remove("okd"); }, 1200);
+    });
+  });
+  const lb = el.querySelector(".lch");
+  if (lb) lb.addEventListener("click", ()=>launchCard(p, lb));
+});
+
+/* ── inbox cards: spoken ideas from the watch ─────── */
+const ideaEls = [];
+INBOX.forEach((it,i)=>{
+  const [cd,cl] = HUES[i%6];
+  const el = document.createElement("article");
+  el.className = "entry idea hidden";
+  el.dataset.text = (it.title+" #"+it.n).toLowerCase();
+  el.style.cssText = `--cat-d:${cd};--cat-l:${cl};view-transition-name:vt-idea-${it.n}`;
+  el.innerHTML = `
+    <div class="top">
+      <span class="mono-tile" aria-hidden="true">#${it.n}</span>
+      <div class="tt">
+        <h4>${esc(it.title)}</h4>
+        <div class="path">${INBOX_REPO} #${it.n}</div>
+      </div>
+      <span class="when">${it.days===0?"today":it.days+"d"}</span>
+      <span class="acts">
+        <a class="ic" href="${it.url}" target="_blank" rel="noopener" title="Open on GitHub">↗</a>
+        <button class="ic idone" title="Copy the close command for when this is filed">✓</button>
+      </span>
+    </div>
+    <div class="desc">Captured ${it.created} via the watch. File it into a project, then close it.</div>`;
+  el.querySelector(".idone").addEventListener("click", e=>{
+    const b = e.currentTarget;
+    navigator.clipboard.writeText(`gh issue close ${it.n} --repo ${INBOX_REPO} --comment "Filed."`).then(()=>{
+      b.classList.add("okd");
+      setTimeout(()=>b.classList.remove("okd"), 1200);
+    });
+  });
+  grid.appendChild(el);
+  ideaEls.push(el);
+});
+
+/* two-step arm for destructive buttons (no native confirm) */
+function armBtn(b, label, fn){
+  if (b.classList.contains("armed")) { disarm(b); fn(); return; }
+  b.classList.add("armed");
+  b.dataset.orig = b.textContent;
+  b.textContent = label;
+  b._t = setTimeout(()=>disarm(b), 3000);
+}
+function disarm(b){
+  clearTimeout(b._t); b.classList.remove("armed");
+  if (b.dataset.orig) b.textContent = b.dataset.orig;
+}
+
+/* ── delete + undo toast ──────────────────────────── */
+const toast = document.getElementById("toast");
+const toastMsg = document.getElementById("toastMsg");
+let toastIds = [], toastTimer = null;
+function delCard(id){
+  tombs[id] = { d: Date.now() };
+  saveT(); vt(update);
+  toastIds.push(id);
+  const n = toastIds.length;
+  toastMsg.textContent = n===1
+    ? `"${PROJECTS.find(p=>p.id===toastIds[0]).name}" moved to Trash`
+    : `${n} cards moved to Trash`;
+  toast.hidden = false;
+  restartToast();
+}
+function restartToast(){ clearTimeout(toastTimer); toastTimer = setTimeout(hideToast, 5000); }
+function hideToast(){ clearTimeout(toastTimer); toast.hidden = true; toastIds = []; }
+toast.addEventListener("mouseenter", ()=>clearTimeout(toastTimer));
+toast.addEventListener("mouseleave", restartToast);
+toast.addEventListener("focusin", ()=>clearTimeout(toastTimer));
+toast.addEventListener("focusout", restartToast);
+document.getElementById("toastUndo").addEventListener("click", ()=>{
+  toastIds.forEach(id=>delete tombs[id]);
+  saveT(); hideToast(); vt(update);
+});
+
+/* ── tabs, filters, sort ──────────────────────────── */
+const tabsEl = document.querySelector(".tabs");
+const tind = document.querySelector(".tind");
+const fWrap = document.getElementById("filters");
+const emptyBtn = document.getElementById("emptyTrash");
+const hintEl = document.getElementById("trashHint");
+const temptyEl = document.getElementById("tempty");
+const searchEl = document.getElementById("search");
+
+fWrap.innerHTML = CATS.map(([k,l])=>
+  `<button class="fchip" data-cat="${k}" aria-pressed="${k==="all"}">${l}<span class="n"></span></button>`
+).join("") + `
+  <span class="sortgrp" role="group" aria-label="Sort cards">
+    <span class="lbl">Sort</span>
+    <button class="schip" data-sort="attention" aria-pressed="false">Attention</button>
+    <button class="schip" data-sort="recent" aria-pressed="false">Recent</button>
+    <button class="schip" data-sort="name" aria-pressed="false">Name</button>
+  </span>`;
+
+fWrap.addEventListener("click", e=>{
+  const f = e.target.closest(".fchip");
+  if (f) {
+    activeCat = f.dataset.cat;
+    fWrap.querySelectorAll(".fchip").forEach(x=>x.setAttribute("aria-pressed", x===f ? "true":"false"));
+    vt(update);
+    return;
+  }
+  const s = e.target.closest(".schip");
+  if (s) {
+    sortMode = s.dataset.sort;
+    localStorage.setItem(SKEY, sortMode);
+    syncSortChips();
+    vt(update);
+  }
+});
+function syncSortChips(){
+  fWrap.querySelectorAll(".schip").forEach(x=>x.setAttribute("aria-pressed", x.dataset.sort===sortMode ? "true":"false"));
+}
+syncSortChips();
+
+tabsEl.addEventListener("click", e=>{
+  const b = e.target.closest(".tab"); if (!b) return;
+  tab = b.dataset.tab;
+  tabsEl.querySelectorAll(".tab").forEach(x=>x.setAttribute("aria-selected", x===b ? "true":"false"));
+  vt(update);
+});
+emptyBtn.addEventListener("click", e=> armBtn(e.currentTarget, "Click again to empty", ()=>{
+  PROJECTS.forEach(p=>{ if (tombs[p.id] && !tombs[p.id].purged) tombs[p.id].purged = 1; });
+  saveT(); vt(update);
+}));
+function placeInd(){
+  const b = tabsEl.querySelector('.tab[aria-selected="true"]');
+  tind.style.width = b.offsetWidth + "px";
+  tind.style.translate = b.offsetLeft + "px 0";
+}
+addEventListener("resize", placeInd);
+addEventListener("load", placeInd);
+
+/* ── sort comparators ─────────────────────────────── */
+const sevRank = p => p.flags.some(f=>f[1]==="crit") ? 0 : p.flags.some(f=>f[1]==="warn") ? 1 : 2;
+const dayVal = p => p.days==null ? 9999 : p.days;
+const CMP = {
+  attention: (a,b)=> sevRank(a)-sevRank(b) || dayVal(a)-dayVal(b),
+  recent:    (a,b)=> dayVal(a)-dayVal(b),
+  name:      (a,b)=> a.name.localeCompare(b.name),
+};
+const agoTxt = ms => {
+  const d = Math.floor((Date.now()-ms)/86400000);
+  return d===0 ? "deleted today" : `deleted ${d}d ago`;
+};
+
+/* ── the one renderer: visibility, order, counts ──── */
+function update(){
+  const q = (searchEl.value||"").trim().toLowerCase();
+  const alive = PROJECTS.filter(p=>!tombs[p.id]?.purged);
+  const boardP = alive.filter(p=>!tombs[p.id]);
+  const trashP = alive.filter(p=>tombs[p.id]);
+
+  document.getElementById("nBoard").textContent = boardP.length;
+  document.getElementById("nTrash").textContent = trashP.length;
+  document.getElementById("nInbox").textContent = INBOX.length;
+  fWrap.querySelectorAll(".fchip").forEach(ch=>{
+    const k = ch.dataset.cat;
+    ch.querySelector(".n").textContent = k==="all" ? boardP.length : boardP.filter(p=>p.cat===k).length;
+  });
+
+  PROJECTS.forEach(p=>{
+    const el = cardEls.get(p.id), t = tombs[p.id];
+    if (t?.purged) { el.classList.add("hidden"); return; }
+    el.classList.toggle("trashed", !!t);
+    el.classList.toggle("pinned", pins.has(p.id) && !t);
+    el.querySelector(".pin").setAttribute("aria-pressed", pins.has(p.id));
+    const show = tab==="trash"
+      ? !!t
+      : tab==="inbox"
+      ? false
+      : !t && (activeCat==="all" || p.cat===activeCat) && (!q || el.dataset.text.includes(q));
+    el.classList.toggle("hidden", !show);
+    if (t) el.querySelector(".tmeta").textContent = agoTxt(t.d);
+  });
+  ideaEls.forEach(el=>{
+    el.classList.toggle("hidden", tab!=="inbox" || (q && !el.dataset.text.includes(q)));
+  });
+
+  const list = tab==="trash"
+    ? trashP.slice().sort((a,b)=>tombs[b.id].d - tombs[a.id].d)
+    : boardP.slice().sort((a,b)=> (pins.has(b.id)-pins.has(a.id)) || CMP[sortMode](a,b));
+  list.forEach(p=>grid.appendChild(cardEls.get(p.id)));
+
+  fWrap.style.display = tab==="board" ? "" : "none";
+  hintEl.hidden = tab!=="trash";
+  document.getElementById("inboxHint").hidden = tab!=="inbox";
+  emptyBtn.hidden = !(tab==="trash" && trashP.length>0);
+  temptyEl.hidden = !(tab==="trash" && trashP.length===0);
+  document.getElementById("iempty").hidden = !(tab==="inbox" && INBOX.length===0);
+  placeInd();
+}
+searchEl.addEventListener("input", ()=>update());   /* instant, no transition while typing */
+update();
+
+/* ── changed since your last visit ────────────────── */
+(function(){
+  const prev = store(LKEY);
+  const m = {}; PROJECTS.forEach(p=>m[p.id] = p.last||"");
+  if (prev && prev.m) {
+    const changed = PROJECTS.filter(p=> prev.m[p.id]!==undefined && prev.m[p.id]!==(p.last||""));
+    if (changed.length) {
+      changed.forEach(p=>cardEls.get(p.id).classList.add("chg"));
+      const s = document.createElement("span");
+      s.className = "chg-note";
+      s.textContent = ` ${changed.length} card${changed.length>1?"s":""} updated since your last visit.`;
+      document.getElementById("boardSub").appendChild(s);
+    }
+  }
+  /* refresh the snapshot at most every 6 hours so the markers survive same-day reloads */
+  if (!prev || Date.now()-prev.t > 216e5) localStorage.setItem(LKEY, JSON.stringify({ t: Date.now(), m }));
+})();
+
+/* ── entrance choreography, once per session ──────── */
+const FIRST = !sessionStorage.getItem("radar-anim");
+if (FIRST) sessionStorage.setItem("radar-anim","1");
+if (FIRST && !RM) {
+  document.body.classList.add("first");
+  /* stamp visual order before first paint; the CSS animation does the rest */
+  let stag = 0;
+  grid.querySelectorAll(".entry:not(.hidden)").forEach(el=>el.style.setProperty("--i", stag++));
+
+  /* count-up figures */
+  const ease = t => 1 - 2 ** (-10 * t);
+  const io2 = new IntersectionObserver(es=>{
+    es.forEach(en=>{
+      if (!en.isIntersecting) return;
+      io2.unobserve(en.target);
+      const el = en.target, end = +el.dataset.v, t0 = performance.now();
+      requestAnimationFrame(function f(t){
+        const p = Math.min((t-t0)/900, 1);
+        el.textContent = Math.round(end * ease(p));
+        if (p < 1) requestAnimationFrame(f);
+      });
+    });
+  }, { threshold: .5 });
+  document.querySelectorAll(".fig .v").forEach(el=>{
+    el.dataset.v = el.textContent; el.textContent = "0"; io2.observe(el);
+  });
+}
+
+/* ── recency bar-table (REC comes from the sweep data block) ── */
+const maxD = Math.max(1, ...REC.map(r=>r[1]));
+document.getElementById("recencyRows").innerHTML = REC.map(r=>`
+  <div class="row" data-name="${r[0]}" data-days="${r[1]}" data-date="${r[2]}" data-note="${r[3].replace(/"/g,"&quot;")}">
+    <div class="name">${r[0]}</div>
+    <div class="track"><div class="bar" style="width:${r[1]===0?0.5:Math.max(1.2,(r[1]/maxD)*100)}%"></div></div>
+    <div class="val">${r[1]===0?"today":r[1]+"d"}${r[1]>14?'<span class="stale">stale</span>':""}</div>
+  </div>`).join("");
+
+/* tooltip (hover layer) */
+const tip = document.getElementById("tooltip");
+document.getElementById("recencyRows").addEventListener("mousemove", e=>{
+  const row = e.target.closest(".row");
+  if(!row){ tip.style.display="none"; return; }
+  tip.innerHTML = `<div class="t1">${row.dataset.name}, ${row.dataset.date}</div><div class="t2">${row.dataset.note}</div>`;
+  tip.style.display = "block";
+  const w = tip.offsetWidth, x = Math.min(e.clientX+14, innerWidth-w-12);
+  tip.style.left = x+"px"; tip.style.top = (e.clientY+16)+"px";
+});
+document.getElementById("recencyRows").addEventListener("mouseleave", ()=>tip.style.display="none");
+
+/* ── theme toggle ─────────────────────────────────── */
+const root = document.documentElement;
+const savedTheme = localStorage.getItem("radar-theme");
+if(savedTheme) root.dataset.theme = savedTheme;
+const themeBtn = document.getElementById("themeBtn");
+themeBtn.addEventListener("click", ()=>{
+  const dark = root.dataset.theme ? root.dataset.theme==="dark"
+             : matchMedia("(prefers-color-scheme: dark)").matches;
+  root.dataset.theme = dark ? "light" : "dark";
+  localStorage.setItem("radar-theme", root.dataset.theme);
+});
+
+/* ── page views: board front and center, the rest behind the nav ── */
+const viewLinks = [...document.querySelectorAll("#views a")];
+function showView(v){
+  if (!document.getElementById(v) || !document.querySelector(`#views a[data-view="${v}"]`)) v = "board";
+  document.querySelectorAll("main > section").forEach(s=>s.classList.toggle("on", s.id===v));
+  viewLinks.forEach(a=>a.setAttribute("aria-current", a.dataset.view===v ? "true":"false"));
+  scrollTo(0, 0);
+  if (v==="board") placeInd();
+}
+showView((location.hash||"").slice(1) || "board");
+addEventListener("hashchange", ()=>vt(()=>showView((location.hash||"").slice(1) || "board")));
+
+/* ── mission control live layer (only when served, not as a bare file) ── */
+const flashEl = document.createElement("div");
+flashEl.id = "flash"; flashEl.hidden = true; flashEl.setAttribute("role","status");
+document.body.appendChild(flashEl);
+let flashT = null;
+function flash(msg, ms){
+  flashEl.textContent = msg; flashEl.hidden = false;
+  clearTimeout(flashT); flashT = setTimeout(()=>flashEl.hidden = true, ms||3500);
+}
+
+async function launchCard(p, btn){
+  btn.classList.add("busy");
+  flash(`Opening ${p.label||p.name} in Herdr…`, 20000);
+  try {
+    const r = await fetch("/api/launch", { method:"POST",
+      headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ id: p.id }) });
+    const j = await r.json();
+    flash(j.ok ? `Claude is on it: ${p.label||p.name}, in Herdr` : `Launch failed: ${j.error||"unknown"}`, j.ok?4000:7000);
+  } catch { flash("Mission Control server unreachable; is it running?", 6000); }
+  btn.classList.remove("busy");
+}
+
+if (SRV) {
+  const sweepBtn = document.getElementById("sweepBtn");
+  sweepBtn.hidden = false;
+  const pill = document.createElement("button");
+  pill.id = "fresh"; pill.hidden = true; pill.textContent = "Board updated · Refresh";
+  pill.addEventListener("click", ()=>location.reload());
+  document.body.appendChild(pill);
+
+  async function live(){
+    try {
+      const j = await (await fetch("/api/live", { cache:"no-store" })).json();
+      if (j.sweptAt && SWEPT.at && j.sweptAt > SWEPT.at) {
+        if (document.hidden) { location.reload(); return; }
+        pill.hidden = false;
+      }
+      const agents = j.agents || {};
+      PROJECTS.forEach(p=>{
+        const el = cardEls.get(p.id); if (!el) return;
+        const dot = el.querySelector(".live"); if (!dot) return;
+        const st = agents[p.label];
+        if (st && st!=="unknown") { dot.hidden = false; dot.className = "live "+st; dot.title = "Herdr agent: "+st; }
+        else dot.hidden = true;
+      });
+    } catch {}
+  }
+  live();
+  setInterval(live, 30000);
+  document.addEventListener("visibilitychange", ()=>{ if (!document.hidden) live(); });
+
+  sweepBtn.addEventListener("click", async ()=>{
+    sweepBtn.disabled = true; sweepBtn.textContent = "Sweeping…";
+    try {
+      await fetch("/api/sweep", { method:"POST" });
+      const t0 = SWEPT.at;
+      const poll = setInterval(async ()=>{
+        try {
+          const j = await (await fetch("/api/live", { cache:"no-store" })).json();
+          if (j.sweptAt > t0) { clearInterval(poll); location.reload(); }
+        } catch {}
+      }, 1500);
+      setTimeout(()=>{ clearInterval(poll); sweepBtn.disabled = false; sweepBtn.textContent = "Sweep"; }, 90000);
+    } catch { sweepBtn.disabled = false; sweepBtn.textContent = "Sweep"; }
+  });
+}
+
+/* ── keyboard: / focuses search, t toggles theme ──── */
+addEventListener("keydown", e=>{
+  const typing = e.target.matches("input, textarea, select");
+  if (typing) {
+    if (e.key==="Escape" && e.target===searchEl) { searchEl.value=""; update(); searchEl.blur(); }
+    return;
+  }
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key==="/") { e.preventDefault(); searchEl.focus(); }
+  else if (e.key==="t") { themeBtn.click(); }
+});
+</script>
+</body>
+</html>

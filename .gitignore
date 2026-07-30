@@ -1,0 +1,16 @@
+# instance data — never commit your own board
+config.json
+board.html
+data.json
+BOARD.md
+.cache.json
+status/
+logs/
+backups/
+
+# build artifacts
+*.iconset/
+app/*.app/
+node_modules/
+venv/
+.DS_Store
