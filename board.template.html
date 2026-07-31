@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#0B0E14" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#F5F6F8" media="(prefers-color-scheme: light)">
-<title>Project Radar</title>
+<title>Project Radar — Mission Control</title>
+<link rel="manifest" href="/manifest.webmanifest">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
@@ -552,7 +553,7 @@
 
   /* mission control: sweep button, live agent dots, launch, flash, refresh pill */
   #sweepBtn {
-    font: 500 12.5px var(--sans); color: var(--ink-2); background: none;
+    font: 500 12.5px var(--display); color: var(--ink-2); background: none;
     border: 1px solid var(--grid); border-radius: 8px; padding: 6px 12px; cursor: pointer;
   }
   #sweepBtn:hover { color: var(--ink-1); border-color: var(--baseline); }
@@ -574,14 +575,14 @@
   .ic.busy { opacity: .5; pointer-events: none; }
   #flash {
     position: fixed; left: 50%; bottom: 26px; translate: -50% 0; z-index: 60;
-    font: 500 13px var(--sans); color: var(--ink-1); background: var(--surface-2, var(--surface));
+    font: 500 13px var(--display); color: var(--ink-1); background: var(--surface-2, var(--surface));
     border: 1px solid var(--baseline); border-radius: 10px; padding: 10px 16px;
     box-shadow: 0 8px 30px rgb(0 0 0 / .25);
   }
   #flash[hidden] { display: none; }
   #fresh {
     position: fixed; left: 50%; top: 64px; translate: -50% 0; z-index: 60; cursor: pointer;
-    font: 600 12.5px var(--sans); color: #fff; background: #2563EB; border: none;
+    font: 600 12.5px var(--display); color: #fff; background: #2563EB; border: none;
     border-radius: 999px; padding: 8px 16px; box-shadow: 0 8px 30px rgb(37 99 235 / .35);
   }
   #fresh[hidden] { display: none; }
@@ -893,14 +894,27 @@ const HUES = [
   ["#178E68","#007654"], ["#CB6784","#B84562"], ["#2DA6B9","#007A99"]
 ];
 
+/* Hue is keyed on the project id, not its position: adding or removing a
+   project must not repaint every card after it. */
+const hue = id => {
+  let h = 0;
+  for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return h % HUES.length;
+};
+
 /* ── persistent state ─────────────────────────────── */
 const TKEY = "radar-tombstones-v1";   /* {id:{d:ms, purged?:1}} survives regeneration */
 const PKEY = "radar-pins-v1";
 const SKEY = "radar-sort-v1";
 const LKEY = "radar-seen-v1";
+/* Any of these keys can be corrupt, hand-edited, or written by an older
+   version. A bad value must degrade one feature, never take down the board. */
 const store = k => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } };
-let tombs = store(TKEY) || {};
-let pins  = new Set(store(PKEY) || []);
+const isObj = v => v !== null && typeof v === "object" && !Array.isArray(v);
+const rawTombs = store(TKEY);
+let tombs = isObj(rawTombs) ? rawTombs : {};
+const rawPins = store(PKEY);
+let pins  = new Set(Array.isArray(rawPins) ? rawPins.filter(x=>typeof x==="string") : []);
 let sortMode = localStorage.getItem(SKEY) || "attention";
 let activeCat = "all";
 let tab = "board";
@@ -914,9 +928,23 @@ const vt = fn => { if (RM || !document.startViewTransition) { fn(); return; } do
 /* ── board render (cards built once, then shown/hidden/reordered) ── */
 const grid = document.getElementById("boardGrid");
 const GLYPH = { crit:"▲", warn:"◆", ok:"●" };
-const tag = (t,k)=>`<span class="sev ${k||""}">${k?`<i>${GLYPH[k]}</i>`:""}${t}</span>`;
-const esc = s => s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+/* Everything the sweep collects is untrusted text: commit subjects, branch
+   names, PR and issue titles, and session prompts all end up here. esc() is the
+   only thing between them and innerHTML, so it escapes quotes too (these values
+   land inside attributes) and never throws on a missing field. */
+const esc = s => String(s ?? "")
+  .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+  .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+const SEVK = { crit:1, warn:1, ok:1 };
+const tag = (t,k)=>{ const kk = SEVK[k] ? k : ""; return `<span class="sev ${kk}">${kk?`<i>${GLYPH[kk]}</i>`:""}${esc(t)}</span>`; };
+/* only http(s) links may reach an href; anything else (javascript:, data:) is inert */
+const safeUrl = u => /^https?:\/\//i.test(String(u||"")) ? esc(u) : "#";
 
+const hay = s => String(s ?? "").toLowerCase().replace(/"/g,"");
+/* the copied command is pasted into a shell: a path with a space or a $(…) in
+   it must arrive as one literal argument */
+const shq = s => "'" + String(s ?? "").replace(/'/g, `'\\''`) + "'";
+const cssId = s => String(s ?? "").replace(/[^A-Za-z0-9_-]/g, "-") || "x";
 const relTime = p => p.days==null ? (p.last||"") : p.days===0 ? "today" : p.days+"d";
 const freshCls = p => {
   if (p.days==null) return "";
@@ -924,39 +952,64 @@ const freshCls = p => {
   return p.days>21 ? "f2" : p.days>7 ? "f1" : "";
 };
 
+/* clipboard is unavailable on insecure origins (opening the board from a phone
+   over the LAN) and can be denied; fall back rather than throwing into nothing */
+function copyText(btn, text, restore){
+  const done = ok => {
+    btn.textContent = ok ? "✓" : "!";
+    btn.classList.toggle("okd", ok);
+    if (!ok) flash("Copy blocked by the browser. Command: " + text, 6000);
+    setTimeout(()=>{ btn.textContent = restore; btn.classList.remove("okd"); }, ok ? 1200 : 2000);
+  };
+  if (!navigator.clipboard?.writeText) return done(false);
+  navigator.clipboard.writeText(text).then(()=>done(true), ()=>done(false));
+}
+
 const cardEls = new Map();
 PROJECTS.forEach((p,i)=>{
-  const [cd,cl] = HUES[(i+5)%6];
+  /* the sweep can hand us an incomplete record; never let one card kill the board */
+  p.name = p.name || p.id || "untitled";
+  p.path = p.path || "";
+  p.desc = p.desc || "";
+  /* flags are [text, severity] pairs; freshCls and the dim check call
+     String methods on f[0], so a non-string entry would halt the whole loop */
+  p.flags = (Array.isArray(p.flags) ? p.flags : [])
+    .filter(f => Array.isArray(f) && f.length && f[0] != null)
+    .map(f => [String(f[0]), f[1]]);
+  p.next = (Array.isArray(p.next) ? p.next : []).filter(n => n != null && n !== "").map(String);
+  const [cd,cl] = HUES[hue(p.id)];
   const el = document.createElement("article");
   el.className = "entry";
   el.dataset.cat = p.cat;
   el.dataset.id = p.id;
-  el.dataset.text = (p.name+" "+p.path+" "+p.desc+" "+p.next.join(" ")).toLowerCase().replace(/"/g,"");
-  el.style.cssText = `--cat-d:${cd};--cat-l:${cl};view-transition-name:vt-${p.id}`;
+  el.dataset.text = hay(p.name+" "+p.path+" "+p.desc+" "+p.next.join(" "));
+  /* p.id comes from the registry: keep it to an identifier so a ";" cannot
+     close view-transition-name and append arbitrary declarations */
+  el.style.cssText = `--cat-d:${cd};--cat-l:${cl};view-transition-name:vt-${cssId(p.id)}`;
   if (p.cat==="stale" || p.cat==="junk" || p.flags.some(f=>f[0].includes("paused"))) el.classList.add("dim");
   el.innerHTML = `
     <div class="top">
       <span class="mono-tile" aria-hidden="true">${(p.name[0]||"?").toUpperCase()}<span class="live" hidden></span></span>
       <div class="tt">
         <h4>${esc(p.name)}</h4>
-        <div class="path">${p.path}</div>
+        <div class="path">${esc(p.path)}</div>
       </div>
-      <span class="when ${freshCls(p)}" ${p.last?`title="Last touched ${p.last}"`:""}>${relTime(p)}</span>
+      <span class="when ${freshCls(p)}" ${p.last?`title="Last touched ${esc(p.last)}"`:""}>${esc(relTime(p))}</span>
       <span class="acts">
         ${SRV && p.launch!==false ? `<button class="ic lch" aria-label="Start Claude on ${esc(p.name)} in Herdr" title="Open a Herdr space and start Claude on the next step">🐏</button>` : ""}
         <button class="ic pin" aria-label="Pin ${esc(p.name)}" aria-pressed="false" title="Pin to top">★</button>
-        <button class="ic copy" aria-label="Copy resume command for ${esc(p.name)}" title="Copy: cd ${p.absPath || p.path} &amp;&amp; claude">❯</button>
+        <button class="ic copy" aria-label="Copy resume command for ${esc(p.name)}" title="Copy: cd ${esc(shq(p.absPath || p.path))} &amp;&amp; claude">❯</button>
         <button class="ic del" aria-label="Move ${esc(p.name)} to Trash" title="Move to Trash">✕</button>
       </span>
     </div>
-    <div class="desc">${p.desc}</div>
+    <div class="desc">${esc(p.desc)}</div>
     ${p.flags.length?`<div class="e-flags">${p.flags.map(f=>tag(f[0],f[1])).join("")}</div>`:""}
     ${p.next.length?`<div class="next-a" title="${esc(p.next[0])}">${esc(p.next[0])}</div>`:""}
     <details>
       <summary>Details${p.next.length?` (${p.next.length})`:""}</summary>
       <div class="body">
-        ${p.lastWork?`<b>Last session</b>${p.lastWork}`:""}
-        ${p.next.length?`<b>Next steps</b><ul>${p.next.map(n=>`<li>${n}</li>`).join("")}</ul>`:""}
+        ${p.lastWork?`<b>Last session</b>${esc(p.lastWork)}`:""}
+        ${p.next.length?`<b>Next steps</b><ul>${p.next.map(n=>`<li>${esc(n)}</li>`).join("")}</ul>`:""}
       </div>
     </details>
     <div class="tacts">
@@ -975,16 +1028,7 @@ PROJECTS.forEach((p,i)=>{
     e.currentTarget.setAttribute("aria-pressed", pins.has(p.id));
     saveP(); vt(update);
   });
-  el.querySelector(".copy").addEventListener("click", e=>{
-    const b = e.currentTarget;
-    /* absPath is absolute; the tilde display path would not expand inside
-       the quotes. Quote the path so spaces survive the paste into a shell. */
-    const dir = (p.absPath || p.path).replace(/'/g, `'\\''`);
-    navigator.clipboard.writeText(`cd '${dir}' && claude`).then(()=>{
-      b.textContent = "✓"; b.classList.add("okd");
-      setTimeout(()=>{ b.textContent = "❯"; b.classList.remove("okd"); }, 1200);
-    });
-  });
+  el.querySelector(".copy").addEventListener("click", e=>copyText(e.currentTarget, `cd ${shq(p.absPath || p.path)} && claude`, "❯"));
   const lb = el.querySelector(".lch");
   if (lb) lb.addEventListener("click", ()=>launchCard(p, lb));
 });
@@ -995,8 +1039,8 @@ INBOX.forEach((it,i)=>{
   const [cd,cl] = HUES[i%6];
   const el = document.createElement("article");
   el.className = "entry idea hidden";
-  el.dataset.text = (it.title+" #"+it.n).toLowerCase();
-  el.style.cssText = `--cat-d:${cd};--cat-l:${cl};view-transition-name:vt-idea-${it.n}`;
+  el.dataset.text = hay(it.title+" #"+it.n);
+  el.style.cssText = `--cat-d:${cd};--cat-l:${cl};view-transition-name:vt-idea-${cssId(it.n)}`;
   el.innerHTML = `
     <div class="top">
       <span class="mono-tile" aria-hidden="true">#${it.n}</span>
@@ -1004,20 +1048,15 @@ INBOX.forEach((it,i)=>{
         <h4>${esc(it.title)}</h4>
         <div class="path">${INBOX_REPO} #${it.n}</div>
       </div>
-      <span class="when">${it.days===0?"today":it.days+"d"}</span>
+      <span class="when">${it.days===0?"today":esc(it.days)+"d"}</span>
       <span class="acts">
-        <a class="ic" href="${it.url}" target="_blank" rel="noopener" title="Open on GitHub">↗</a>
+        <a class="ic" href="${safeUrl(it.url)}" target="_blank" rel="noopener" title="Open on GitHub">↗</a>
         <button class="ic idone" title="Copy the close command for when this is filed">✓</button>
       </span>
     </div>
-    <div class="desc">Captured ${it.created} via the watch. File it into a project, then close it.</div>`;
-  el.querySelector(".idone").addEventListener("click", e=>{
-    const b = e.currentTarget;
-    navigator.clipboard.writeText(`gh issue close ${it.n} --repo ${INBOX_REPO} --comment "Filed."`).then(()=>{
-      b.classList.add("okd");
-      setTimeout(()=>b.classList.remove("okd"), 1200);
-    });
-  });
+    <div class="desc">Captured ${esc(it.created)} via the watch. File it into a project, then close it.</div>`;
+  el.querySelector(".idone").addEventListener("click", e=>
+    copyText(e.currentTarget, `gh issue close ${it.n} --repo ${INBOX_REPO} --comment "Filed."`, "✓"));
   grid.appendChild(el);
   ideaEls.push(el);
 });
@@ -1057,7 +1096,8 @@ toast.addEventListener("mouseleave", restartToast);
 toast.addEventListener("focusin", ()=>clearTimeout(toastTimer));
 toast.addEventListener("focusout", restartToast);
 document.getElementById("toastUndo").addEventListener("click", ()=>{
-  toastIds.forEach(id=>delete tombs[id]);
+  /* never resurrect a card that was purged in the meantime */
+  toastIds.forEach(id=>{ if (tombs[id] && !tombs[id].purged) delete tombs[id]; });
   saveT(); hideToast(); vt(update);
 });
 
@@ -1101,10 +1141,13 @@ function syncSortChips(){
 }
 syncSortChips();
 
+function selectTab(name){
+  tab = name;
+  tabsEl.querySelectorAll(".tab").forEach(x=>x.setAttribute("aria-selected", x.dataset.tab===name ? "true":"false"));
+}
 tabsEl.addEventListener("click", e=>{
   const b = e.target.closest(".tab"); if (!b) return;
-  tab = b.dataset.tab;
-  tabsEl.querySelectorAll(".tab").forEach(x=>x.setAttribute("aria-selected", x===b ? "true":"false"));
+  selectTab(b.dataset.tab);
   vt(update);
 });
 emptyBtn.addEventListener("click", e=> armBtn(e.currentTarget, "Click again to empty", ()=>{
@@ -1125,16 +1168,17 @@ const dayVal = p => p.days==null ? 9999 : p.days;
 const CMP = {
   attention: (a,b)=> sevRank(a)-sevRank(b) || dayVal(a)-dayVal(b),
   recent:    (a,b)=> dayVal(a)-dayVal(b),
-  name:      (a,b)=> a.name.localeCompare(b.name),
+  name:      (a,b)=> String(a.name||"").localeCompare(String(b.name||"")),
 };
+if (!CMP[sortMode]) sortMode = "attention";   /* an unknown stored key used to break every render */
 const agoTxt = ms => {
-  const d = Math.floor((Date.now()-ms)/86400000);
-  return d===0 ? "deleted today" : `deleted ${d}d ago`;
+  const d = Math.floor((Date.now()-(+ms||Date.now()))/86400000);
+  return !isFinite(d) || d<=0 ? "deleted today" : `deleted ${d}d ago`;
 };
 
 /* ── the one renderer: visibility, order, counts ──── */
 function update(){
-  const q = (searchEl.value||"").trim().toLowerCase();
+  const q = hay((searchEl.value||"").trim());   /* same normalization as the haystack */
   const alive = PROJECTS.filter(p=>!tombs[p.id]?.purged);
   const boardP = alive.filter(p=>!tombs[p.id]);
   const trashP = alive.filter(p=>tombs[p.id]);
@@ -1163,8 +1207,11 @@ function update(){
     if (show) shownBoard++;
     if (t) el.querySelector(".tmeta").textContent = agoTxt(t.d);
   });
+  let shownInbox = 0;
   ideaEls.forEach(el=>{
-    el.classList.toggle("hidden", tab!=="inbox" || (q && !el.dataset.text.includes(q)));
+    const show = tab==="inbox" && (!q || el.dataset.text.includes(q));
+    el.classList.toggle("hidden", !show);
+    if (show) shownInbox++;
   });
 
   const list = tab==="trash"
@@ -1178,18 +1225,21 @@ function update(){
   emptyBtn.hidden = !(tab==="trash" && trashP.length>0);
   temptyEl.hidden = !(tab==="trash" && trashP.length===0);
   document.getElementById("iempty").hidden = !(tab==="inbox" && INBOX.length===0);
-  document.getElementById("nomatch").hidden = !(tab==="board" && q && shownBoard===0);
+  document.getElementById("nomatch").hidden = !(q && ((tab==="board" && shownBoard===0) || (tab==="inbox" && INBOX.length>0 && shownInbox===0)));
   document.querySelector(".hintline").hidden = tab!=="board";
   const cn = document.getElementById("chgNote");
   cn.hidden = tab!=="board" || !cn.textContent;
   placeInd();
 }
 searchEl.addEventListener("input", ()=>{
-  /* searching from any view jumps to the board, where the results live.
-     No view transition here: its capture freeze would eat keystrokes. */
-  if (searchEl.value && !document.getElementById("board").classList.contains("on")) {
-    history.replaceState(null, "", "#board");
-    showView("board");
+  /* searching from anywhere lands you on the Board tab of the board view,
+     where results live. No view transition: its capture freeze eats keystrokes. */
+  if (searchEl.value) {
+    if (!document.getElementById("board").classList.contains("on")) {
+      history.replaceState(null, "", "#board");
+      showView("board");
+    }
+    if (tab !== "board") selectTab("board");
   }
   update();   /* instant, no transition while typing */
 });
@@ -1197,7 +1247,8 @@ update();
 
 /* ── changed since your last visit ────────────────── */
 (function(){
-  const prev = store(LKEY);
+  const raw = store(LKEY);
+  const prev = isObj(raw) && isObj(raw.m) && isFinite(raw.t) ? raw : null;
   const m = {}; PROJECTS.forEach(p=>m[p.id] = p.last||"");
   if (prev && prev.m) {
     const changed = PROJECTS.filter(p=> prev.m[p.id]!==undefined && prev.m[p.id]!==(p.last||""));
@@ -1243,8 +1294,8 @@ if (FIRST && !RM) {
 /* ── recency bar-table (REC comes from the sweep data block) ── */
 const maxD = Math.max(1, ...REC.map(r=>r[1]));
 document.getElementById("recencyRows").innerHTML = REC.map(r=>`
-  <div class="row" data-name="${r[0]}" data-days="${r[1]}" data-date="${r[2]}" data-note="${r[3].replace(/"/g,"&quot;")}">
-    <div class="name">${r[0]}</div>
+  <div class="row" data-name="${esc(r[0])}" data-days="${esc(r[1])}" data-date="${esc(r[2])}" data-note="${esc(r[3])}">
+    <div class="name">${esc(r[0])}</div>
     <div class="track"><div class="bar" style="width:${r[1]===0?0.5:Math.max(1.2,(r[1]/maxD)*100)}%"></div></div>
     <div class="val">${r[1]===0?"today":r[1]+"d"}${r[1]>14?'<span class="stale">stale</span>':""}</div>
   </div>`).join("");
@@ -1254,7 +1305,13 @@ const tip = document.getElementById("tooltip");
 document.getElementById("recencyRows").addEventListener("mousemove", e=>{
   const row = e.target.closest(".row");
   if(!row){ tip.style.display="none"; return; }
-  tip.innerHTML = `<div class="t1">${row.dataset.name}, ${row.dataset.date}</div><div class="t2">${row.dataset.note}</div>`;
+  /* textContent, not innerHTML: dataset values are decoded back to raw text */
+  tip.replaceChildren();
+  const t1 = document.createElement("div"); t1.className = "t1";
+  t1.textContent = `${row.dataset.name}, ${row.dataset.date}`;
+  const t2 = document.createElement("div"); t2.className = "t2";
+  t2.textContent = row.dataset.note;
+  tip.append(t1, t2);
   tip.style.display = "block";
   const w = tip.offsetWidth, x = Math.min(e.clientX+14, innerWidth-w-12);
   tip.style.left = x+"px"; tip.style.top = (e.clientY+16)+"px";
@@ -1329,7 +1386,10 @@ if (SRV) {
     try {
       const j = await (await fetch("/api/live", { cache:"no-store" })).json();
       if (j.sweptAt && SWEPT.at && j.sweptAt > SWEPT.at) {
-        if (document.hidden) { location.reload(); return; }
+        /* auto-reload only a hidden tab with nothing in flight; otherwise the
+           pill waits, so a typed search or an armed button is never discarded */
+        const busy = searchEl.value || toastIds.length || document.querySelector(".armed, .ic.busy");
+        if (document.hidden && !busy) { location.reload(); return; }
         pill.hidden = false;
       }
       const agents = j.agents || {};
@@ -1349,7 +1409,8 @@ if (SRV) {
   sweepBtn.addEventListener("click", async ()=>{
     sweepBtn.disabled = true; sweepBtn.textContent = "Sweeping…";
     try {
-      await fetch("/api/sweep", { method:"POST" });
+      const r = await fetch("/api/sweep", { method:"POST" });
+      if (!r.ok) throw new Error("sweep refused: " + r.status);   /* fetch does not reject on 4xx/5xx */
       const t0 = SWEPT.at;
       const poll = setInterval(async ()=>{
         try {
@@ -1358,19 +1419,24 @@ if (SRV) {
         } catch {}
       }, 1500);
       setTimeout(()=>{ clearInterval(poll); sweepBtn.disabled = false; sweepBtn.textContent = "Sweep"; }, 90000);
-    } catch { sweepBtn.disabled = false; sweepBtn.textContent = "Sweep"; }
+    } catch (e) {
+      flash("Sweep failed: " + e.message, 6000);
+      sweepBtn.disabled = false; sweepBtn.textContent = "Sweep";
+    }
   });
 }
 
 /* ── keyboard: / focuses search, t toggles theme ──── */
 addEventListener("keydown", e=>{
-  const typing = e.target.matches("input, textarea, select");
+  const el = e.target;
+  const typing = el instanceof Element && el.matches("input, textarea, select");
   if (typing) {
-    if (e.key==="Escape" && e.target===searchEl) { searchEl.value=""; update(); searchEl.blur(); }
+    if (e.key==="Escape" && el===searchEl) { searchEl.value=""; update(); searchEl.blur(); }
     return;
   }
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   if (e.key==="/") { e.preventDefault(); searchEl.focus(); }
+  else if (e.key==="Escape" && searchEl.value) { searchEl.value=""; update(); }   /* Esc works with focus anywhere */
   else if (e.key==="t") { themeBtn.click(); }
 });
 </script>

@@ -15,12 +15,36 @@ const HERE = __dirname;
 const CFG = JSON.parse(fs.readFileSync(path.join(HERE, "config.json"), "utf8"));
 const HOME = process.env.HOME || "/Users/" + (process.env.USER || "");
 const untilde = p => p && p.startsWith("~") ? HOME + p.slice(1) : p;
+/* the scribe resolves symlinks before matching; do the same here so a
+   transcript recorded under a symlinked root still finds its project */
+const REAL = new Map();
+const norm = p => {
+  if (!p) return p;
+  if (REAL.has(p)) return REAL.get(p);
+  let s = untilde(p);
+  try { s = fs.realpathSync(s); } catch {}
+  s = s.length > 1 ? s.replace(/\/+$/, "") : s;
+  REAL.set(p, s);
+  return s;
+};
 const tilde = p => p && p.startsWith(HOME) ? "~" + p.slice(HOME.length) : p;
 const HOME_DIR = () => path.resolve(HERE, untilde(CFG.home || "."));
 const DRY = process.argv.includes("--dry");
+const GIT = () => bin(CFG.git, "git");
+const GH = () => bin(CFG.gh, "gh");
 const AS_JSON = process.argv.includes("--json");
 const NOW = Date.now();
 const DAY = 86400000;
+
+/* a configured binary path that does not exist falls back to the bare name, so
+   PATH resolution still finds it (Homebrew lives in different prefixes) */
+function bin(configured, name) {
+  if (configured && fs.existsSync(configured)) return configured;
+  if (configured) warn(`${name} not found at ${configured}; falling back to PATH`);
+  return name;
+}
+const WARNED = [];
+function warn(msg) { if (!WARNED.includes(msg)) { WARNED.push(msg); console.error("warning: " + msg); } }
 
 function sh(cmd, args, opts = {}) {
   try {
@@ -58,36 +82,43 @@ function walk(root, depth, out) {
   }
 }
 function originOf(p) {
-  const u = sh(CFG.git, ["-C", p, "config", "--get", "remote.origin.url"]);
+  let u = sh(GIT(), ["-C", p, "config", "--get", "remote.origin.url"]);
   if (!u) return null;
-  return u.replace(/^[a-z+]+:\/\//, "").replace(/^git@/, "").replace(/^ssh:\/\//, "")
-    .replace(":", "/").replace(/\.git$/, "").replace(/\/$/, "").toLowerCase();
+  u = u.replace(/^[a-z+]+:\/\//, "").replace(/^ssh:\/\//, "");
+  u = u.replace(/^[^@/]*@/, "");   /* git@host and https://user:token@host both drop out */
+  u = u.replace(/:(\d+)(?=\/)/, "");   /* an explicit ssh port is not part of the identity */
+  return u.replace(":", "/").replace(/\.git$/, "").replace(/\/$/, "").toLowerCase();
 }
 
 /* one repo checkout scan */
 function scanRepo(p, opts = {}) {
   const r = { path: p, dirty: 0, newestTs: 0, newestSubject: "", newestBranch: "",
     aheadTotal: 0, localOnly: [], branch: null, hasRemote: false };
-  const st = sh(CFG.git, ["-C", p, "status", "--porcelain"]);
+  const st = sh(GIT(), ["-C", p, "status", "--porcelain"]);
   if (st != null) {
     let lines = st ? st.split("\n") : [];
     if (opts.excludeNested && opts.excludeNested.length)
       lines = lines.filter(l => !opts.excludeNested.some(n => l.slice(3).startsWith(n + "/") || l.slice(3) === n + "/"));
     r.dirty = lines.length;
   }
-  const refs = sh(CFG.git, ["-C", p, "for-each-ref", "refs/heads",
-    "--format=%(committerdate:unix)|%(refname:short)|%(upstream:track)|%(upstream)|%(subject)"]);
+  /* \x01 separator: a branch name may legally contain "|", which used to shift
+     every field after it and make unpushed work look clean */
+  const refs = sh(GIT(), ["-C", p, "for-each-ref", "refs/heads",
+    "--format=%(committerdate:unix)%01%(refname:short)%01%(upstream:track)%01%(upstream)%01%(subject)"]);
   if (refs) {
+    const local = [];
     for (const line of refs.split("\n")) {
-      const [ts, name, track, upstream, ...subj] = line.split("|");
+      const [ts, name, track, upstream, ...subj] = line.split("\x01");
       const t = (+ts) * 1000;
-      if (t > r.newestTs) { r.newestTs = t; r.newestBranch = name; r.newestSubject = subj.join("|"); }
+      if (t > r.newestTs) { r.newestTs = t; r.newestBranch = name; r.newestSubject = subj.join("\x01"); }
       const ahead = /\[ahead (\d+)/.exec(track || "");
       if (ahead) r.aheadTotal += +ahead[1];
-      if (!upstream) r.localOnly.push(name);
+      if (!upstream) local.push({ name, t });
     }
+    /* newest first: the branch worth naming is the one you last touched */
+    r.localOnly = local.sort((a, b) => b.t - a.t).map(x => x.name);
   }
-  r.branch = sh(CFG.git, ["-C", p, "rev-parse", "--abbrev-ref", "HEAD"]);
+  r.branch = sh(GIT(), ["-C", p, "rev-parse", "--abbrev-ref", "HEAD"]);
   r.hasRemote = !!originOf(p);
   if (!r.hasRemote) { r.aheadTotal = 0; r.localOnly = []; }
   return r;
@@ -96,22 +127,38 @@ function scanRepo(p, opts = {}) {
 /* ── Claude session logs: newest activity per project ── */
 function sessionMap() {
   const dirs = [];
+  const root = untilde(CFG.sessionsDir);   /* "~/.claude/projects" is the common config value */
   try {
-    for (const e of fs.readdirSync(CFG.sessionsDir, { withFileTypes: true })) {
+    for (const e of fs.readdirSync(root, { withFileTypes: true })) {
       if (!e.isDirectory()) continue;
-      const d = path.join(CFG.sessionsDir, e.name);
-      let newest = 0;
+      const d = path.join(root, e.name);
+      let newest = 0, newestFile = null;
       try {
         for (const f of fs.readdirSync(d)) {
           if (!f.endsWith(".jsonl")) continue;
           const m = fs.statSync(path.join(d, f)).mtimeMs;
-          if (m > newest) newest = m;
+          if (m > newest) { newest = m; newestFile = path.join(d, f); }
         }
       } catch {}
-      if (newest) dirs.push({ enc: e.name, newest });
+      if (newest) dirs.push({ enc: e.name, newest, cwd: cwdOf(newestFile) });
     }
   } catch {}
   return dirs;
+}
+/* The directory name encodes a path lossily (every non-alnum becomes "-"), so
+   "~/code/acme-app" and "~/code/acme/app" collide. The transcript's own cwd is
+   authoritative; fall back to the encoded name only when it is unreadable. */
+function cwdOf(file) {
+  if (!file) return null;
+  try {
+    const fd = fs.openSync(file, "r");
+    const buf = Buffer.alloc(8192);
+    const n = fs.readSync(fd, buf, 0, 8192, 0);
+    fs.closeSync(fd);
+    const line = buf.slice(0, n).toString("utf8").split("\n")[0];
+    const cwd = JSON.parse(line).cwd;
+    return typeof cwd === "string" ? cwd : null;
+  } catch { return null; }
 }
 const encode = p => p.replace(/[^A-Za-z0-9]/g, "-");
 
@@ -120,9 +167,9 @@ function ghData() {
   const cacheFile = path.join(HERE, ".cache.json");
   let prs = null, inbox = null;
   const q = `query{viewer{pullRequests(states:OPEN,first:100,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number title url createdAt isDraft headRefName repository{nameWithOwner}}}}}`;
-  const out = sh(CFG.gh, ["api", "graphql", "-f", "query=" + q], { timeout: 25000 });
+  const out = sh(GH(), ["api", "graphql", "-f", "query=" + q], { timeout: 25000 });
   if (out) { try { prs = JSON.parse(out).data.viewer.pullRequests.nodes; } catch {} }
-  const iss = sh(CFG.gh, ["issue", "list", "--repo", CFG.inboxRepo, "--state", "open",
+  const iss = sh(GH(), ["issue", "list", "--repo", CFG.inboxRepo, "--state", "open",
     "--json", "number,title,createdAt,url", "--limit", "100"], { timeout: 25000 });
   if (iss) { try { inbox = JSON.parse(iss); } catch {} }
   let stale = false;
@@ -134,7 +181,8 @@ function ghData() {
     } catch {}
   }
   prs = prs || []; inbox = inbox || [];
-  try { fs.writeFileSync(cacheFile, JSON.stringify({ prs, inbox, at: NOW })); } catch {}
+  /* read-only modes stay read-only: --dry and --json must not touch the disk */
+  if (!DRY && !AS_JSON) try { fs.writeFileSync(cacheFile, JSON.stringify({ prs, inbox, at: NOW })); } catch {}
   return { prs, inbox, stale };
 }
 
@@ -165,9 +213,20 @@ function assemble() {
   /* map every authored PR to a registry project by repo basename */
   const byRepo = {};
   for (const pr of gh.prs) {
-    const short = pr.repository.nameWithOwner.split("/")[1].toLowerCase();
-    (byRepo[short] = byRepo[short] || []).push(pr);
+    const full = pr.repository.nameWithOwner.toLowerCase();
+    (byRepo[full] = byRepo[full] || []).push(pr);
   }
+  /* a project claims PRs from <ghOwner>/<repo>; ghRepo may be given either way.
+     Keying on the full name stops someoneelse/cli landing on your cli card. */
+  const owner = (CFG.ghOwner || "").toLowerCase();
+  const prsFor = reg => {
+    const raw = (reg.ghRepo || reg.label || path.basename(untilde(reg.repoPath || reg.path) || "")).toLowerCase();
+    if (raw.includes("/")) return byRepo[raw] || [];
+    if (owner) return byRepo[owner + "/" + raw] || [];
+    /* no ghOwner configured: fall back to a repo-name match across owners */
+    const hit = Object.keys(byRepo).filter(k => k.endsWith("/" + raw));
+    return hit.length === 1 ? byRepo[hit[0]] : [];
+  };
 
   const projects = [];
   const hazards = [];
@@ -184,10 +243,17 @@ function assemble() {
     let scan = null, satNote = null, satHaz = null;
 
     if (reg.git) {
-      /* a workspace repo can hold nested clones; keep them out of its dirty count */
-      const nestedWithin = uniq.filter(p2 => p2 !== abs && p2.startsWith(abs + "/"))
-        .map(p2 => p2.slice(abs.length + 1));
-      scan = scanRepo(abs, { excludeNested: reg.nestedClones ? nestedWithin : [] });
+      /* a workspace repo can hold nested clones; keep them out of its dirty
+         count. walk() stops at the outer .git, so look for them directly. */
+      let nestedWithin = [];
+      if (reg.nestedClones) {
+        try {
+          nestedWithin = fs.readdirSync(abs, { withFileTypes: true })
+            .filter(e => e.isDirectory() && !e.name.startsWith(".") && isGitDir(path.join(abs, e.name)))
+            .map(e => e.name);
+        } catch {}
+      }
+      scan = scanRepo(abs, { excludeNested: nestedWithin });
       const o = originOf(abs);
       const sats = (o && origins.get(o) || []).filter(sp => sp !== abs)
         .concat(uniq.filter(sp => sp !== abs && !originOf(sp) && path.basename(sp) === path.basename(abs)))
@@ -220,19 +286,39 @@ function assemble() {
       for (const sp of (o && origins.get(o) || [])) cands.push(sp);
     }
     const prefixes = cands.map(encode);
-    for (const sd of sess) {
-      const mine = prefixes.some(pre => reg.sessionExact ? sd.enc === pre : (sd.enc === pre || sd.enc.startsWith(pre + "-")));
-      if (!mine) continue;
-      if (reg.sessionExact !== true) {
-        /* longest-prefix wins across the whole registry, so a sibling project
-           whose directory name extends another's never leaks sessions into it */
-        const better = CFG.projects.some(other => other !== reg &&
-          [untilde(other.repoPath || other.path)].map(encode)
-            .some(op => op.length > Math.max(...prefixes.filter(pre => sd.enc === pre || sd.enc.startsWith(pre + "-")).map(x => x.length)) &&
-              (sd.enc === op || sd.enc.startsWith(op + "-"))));
-        if (better) continue;
+    /* longest real-path prefix across the whole registry wins, so a session in
+       ~/code/acme-app never counts toward a project at ~/code/acme */
+    const claimLen = p2 => {
+      let best = -1;
+      for (const other of CFG.projects) {
+        if (other.aggregate) continue;
+        for (const c of [norm(other.path), other.repoPath && norm(other.repoPath)]) {
+          if (!c) continue;
+          if ((p2 === c || p2.startsWith(c + "/")) && c.length > best) best = c.length;
+        }
       }
-      if (sd.newest > ts) ts = sd.newest;
+      return best;
+    };
+    const realCands = cands.map(norm);
+    for (const sd of sess) {
+      let mine;
+      if (sd.cwd) {
+        const cwd = norm(sd.cwd);
+        const owner = claimLen(cwd);
+        mine = realCands.some(c => (cwd === c || cwd.startsWith(c + "/")) && c.length >= owner)
+          && (!reg.sessionExact || realCands.includes(cwd));
+      } else {
+        /* no transcript cwd: fall back to the lossy encoded directory name */
+        mine = prefixes.some(pre => reg.sessionExact ? sd.enc === pre : (sd.enc === pre || sd.enc.startsWith(pre + "-")));
+        if (mine && reg.sessionExact !== true) {
+          const mineLen = Math.max(...prefixes.filter(pre => sd.enc === pre || sd.enc.startsWith(pre + "-")).map(x => x.length));
+          const better = CFG.projects.some(other => other !== reg &&
+            [untilde(other.repoPath || other.path)].map(encode)
+              .some(op => op.length > mineLen && (sd.enc === op || sd.enc.startsWith(op + "-"))));
+          if (better) mine = false;
+        }
+      }
+      if (mine && sd.newest > ts) ts = sd.newest;
     }
     if (status && status.updated && status.updated > ts) ts = status.updated;
 
@@ -243,8 +329,7 @@ function assemble() {
 
     /* flags */
     for (const f of reg.okFlags || []) p.flags.push(f);
-    const prShort = ((reg.ghRepo || reg.label || path.basename(abs || "")) + "").toLowerCase();
-    const prList = byRepo[prShort] || [];
+    const prList = prsFor(reg);
     if (prList.length) p.flags.push([`${prList.length} open PR${prList.length > 1 ? "s" : ""}`, ""]);
     if (satNote) p.flags.push([`newest work in ${satNote.rootName.replace(tilde(untilde(CFG.roots[0])) + "/", "")} clone`, "crit"]);
     if (scan) {
@@ -266,7 +351,7 @@ function assemble() {
       let dirtyMembers = 0;
       for (const m of reg.members) {
         const mp = path.join(untilde(reg.path), m);
-        if (isGitDir(mp)) { const s = sh(CFG.git, ["-C", mp, "status", "--porcelain"]); if (s) dirtyMembers++; }
+        if (isGitDir(mp)) { const s = sh(GIT(), ["-C", mp, "status", "--porcelain"]); if (s) dirtyMembers++; }
       }
       if (dirtyMembers) p.flags.push([`${dirtyMembers} hold uncommitted files`, "warn"]);
     }
@@ -289,7 +374,11 @@ function assemble() {
   /* PR table rows: registry order, then external repos */
   const seen = new Set();
   const prRows = [];
-  for (const p of projects) for (const pr of p._prs) { seen.add(pr.url); prRows.push({ ...pr, proj: p.id }); }
+  for (const p of projects) for (const pr of p._prs) {
+    if (seen.has(pr.url)) continue;   /* two cards can resolve to the same repo */
+    seen.add(pr.url);
+    prRows.push({ ...pr, proj: p.id });
+  }
   for (const pr of gh.prs) if (!seen.has(pr.url))
     prRows.push({ number: pr.number, title: pr.title, url: pr.url, createdAt: pr.createdAt, repo: pr.repository.nameWithOwner, proj: null });
   for (const r of prRows) {
@@ -342,10 +431,20 @@ function region(html, name, body, comment) {
   const [a, b] = comment
     ? [`<!-- SWEEP:${name} -->`, `<!-- /SWEEP:${name} -->`]
     : [`/* SWEEP:${name} */`, `/* /SWEEP:${name} */`];
-  const i = html.indexOf(a), j = html.indexOf(b);
-  if (i < 0 || j < 0 || j < i) throw new Error(`marker ${name} missing or malformed`);
+  const i = html.indexOf(a);
+  const j = i < 0 ? -1 : html.indexOf(b, i + a.length);
+  if (i < 0 || j < 0) throw new Error(`marker ${name} missing or malformed`);
+  /* a body carrying its own end marker would swallow the rest of the file on
+     the NEXT sweep; refuse rather than write a board that cannot be reswept */
+  if (body.includes(b) || body.includes(a)) throw new Error(`generated ${name} body contains a sweep marker; refusing to write`);
   return html.slice(0, i + a.length) + "\n" + body + "\n" + html.slice(j);
 }
+/* JSON embedded in an inline script: a closing script tag inside a string ends
+   the element, and a block-comment terminator ends the sweep marker. Escaping
+   "<" and the star-slash pair keeps both inert and still-valid JSON. */
+const jsonInline = v => JSON.stringify(v, null, 2)
+  .replace(/</g, "\\u003C")
+  .replace(/\*\//g, "*\\/");
 
 function render(d) {
   const file = path.join(HOME_DIR(), CFG.boardHtml);
@@ -371,7 +470,7 @@ function render(d) {
       <div class="hz">
         <div class="hz-no">${String(i + 1).padStart(2, "0")}</div>
         <div>
-          <b>${h.title}</b>
+          <b>${esc(h.title)}</b>
           <p>${h.body}</p>
         </div>
         <span class="sev ${h.sev}"><i>${h.sev === "crit" ? "▲" : h.sev === "warn" ? "◆" : "●"}</i>${h.sev === "crit" ? "critical" : h.sev === "warn" ? "warning" : "all clear"}</span>
@@ -398,10 +497,10 @@ function render(d) {
        (a tilde inside the copy's single quotes would never expand) */
     ({ ...rest, label: _label, absPath: _abs, launch: !_noLaunch }));
   html = region(html, "DATA",
-    `const SWEPT = ${JSON.stringify({ at: NOW, human: stampH })};\n` +
-    `const PROJECTS = ${JSON.stringify(pj, null, 2)};\n` +
-    `const INBOX = ${JSON.stringify(d.inbox, null, 2)};\n` +
-    `const REC = ${JSON.stringify(d.rec)};`, false);
+    `const SWEPT = ${jsonInline({ at: NOW, human: stampH })};\n` +
+    `const PROJECTS = ${jsonInline(pj)};\n` +
+    `const INBOX = ${jsonInline(d.inbox)};\n` +
+    `const REC = ${jsonInline(d.rec)};`, false);
 
   return { file, html };
 }
@@ -432,25 +531,32 @@ function boardMd(d) {
 }
 
 /* ═══ main ═══ */
-const d = assemble();
-if (AS_JSON) { console.log(JSON.stringify(d, null, 2)); process.exit(0); }
-const { file, html } = render(d);
-if (DRY) { console.log("dry run ok — all markers found, no files written"); process.exit(0); }
+/* wrapped in a function: a bare top-level return is only legal because CommonJS
+   wraps the file, and it breaks the moment anything parses this as a module.
+   Never process.exit() right after writing to stdout either — a piped stdout is
+   async and the write is truncated at the pipe buffer (~64KB). */
+function main() {
+  const d = assemble();
+  if (AS_JSON) { process.stdout.write(JSON.stringify(d, null, 2) + "\n"); return; }
+  const { file, html } = render(d);
+  if (DRY) { process.stdout.write("dry run ok — all markers found, no files written\n"); return; }
 
-/* backup, then write */
-const bdir = path.join(HERE, "backups");
-fs.mkdirSync(bdir, { recursive: true });
-const stamp = new Date(NOW).toISOString().slice(0, 16).replace(/[:T]/g, "-");
-fs.copyFileSync(file, path.join(bdir, `radar-${stamp}.html`));
-const old = fs.readdirSync(bdir).filter(f => f.startsWith("radar-")).sort();
-while (old.length > 10) fs.unlinkSync(path.join(bdir, old.shift()));
+  /* backup, then write */
+  const bdir = path.join(HERE, "backups");
+  fs.mkdirSync(bdir, { recursive: true });
+  const stamp = new Date(NOW).toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  fs.copyFileSync(file, path.join(bdir, `radar-${stamp}.html`));
+  const old = fs.readdirSync(bdir).filter(f => f.startsWith("radar-")).sort();
+  while (old.length > 10) fs.unlinkSync(path.join(bdir, old.shift()));
 
-fs.writeFileSync(file, html);
-fs.writeFileSync(path.join(HERE, "data.json"), JSON.stringify({
-  sweptAt: NOW, projects: d.projects.map(p => ({
-    id: p.id, name: p.name, label: p._label, path: p._abs, tildePath: p.path,
-    launch: !p._noLaunch, lastWork: p.lastWork, next: p.next, flags: p.flags,
-  })), inbox: d.inbox, figures: d.figures,
-}, null, 2));
-fs.writeFileSync(path.join(HOME_DIR(), "BOARD.md"), boardMd(d));
-console.log(`swept ${d.scannedDirs} checkouts · ${d.figures.prs} PRs · inbox ${d.inbox.length} · ${d.hazards.filter(h => h.sev === "crit").length} critical hazards · board + BOARD.md + data.json written${d.ghStale ? " (gh offline, cached)" : ""}`);
+  fs.writeFileSync(file, html);
+  fs.writeFileSync(path.join(HERE, "data.json"), JSON.stringify({
+    sweptAt: NOW, projects: d.projects.map(p => ({
+      id: p.id, name: p.name, label: p._label, path: p._abs, tildePath: p.path,
+      launch: !p._noLaunch, lastWork: p.lastWork, next: p.next, flags: p.flags,
+    })), inbox: d.inbox, figures: d.figures,
+  }, null, 2));
+  fs.writeFileSync(path.join(HOME_DIR(), "BOARD.md"), boardMd(d));
+  process.stdout.write(`swept ${d.scannedDirs} checkouts · ${d.figures.prs} PRs · inbox ${d.inbox.length} · ${d.hazards.filter(h => h.sev === "crit").length} critical hazards · board + BOARD.md + data.json written${d.ghStale ? " (gh offline, cached)" : ""}\n`);
+}
+main();

@@ -14,3 +14,4 @@ app/*.app/
 node_modules/
 venv/
 .DS_Store
+__pycache__/
