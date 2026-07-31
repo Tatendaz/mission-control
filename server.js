@@ -58,7 +58,7 @@ async function herdr(args, timeout = 20000) {
   try {
     const j = JSON.parse(text.split("\n").pop());
     return j.result !== undefined ? j.result : j;
-  } catch { return r.out ? { raw: r.out } : null; }
+  } catch { return { raw: text }; }   /* non-JSON stderr must surface too, not read as a timeout */
 }
 
 /* ── sweep management ── */
