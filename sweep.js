@@ -394,7 +394,9 @@ function render(d) {
     `  <p>Swept ${stampH} from ${d.scannedDirs} git checkouts, an open-PR search, the ideas inbox, and ${d.sessionDirs} Claude Code session folders.${d.ghStale ? " GitHub data is from the last successful sweep; the network was unreachable this run." : ""}</p>`, true);
 
   const pj = d.projects.map(({ _label, _abs, _noLaunch, _prs, ...rest }) =>
-    ({ ...rest, label: _label, launch: !_noLaunch }));
+    /* absPath feeds the copied shell command; the tilde path is display-only
+       (a tilde inside the copy's single quotes would never expand) */
+    ({ ...rest, label: _label, absPath: _abs, launch: !_noLaunch }));
   html = region(html, "DATA",
     `const SWEPT = ${JSON.stringify({ at: NOW, human: stampH })};\n` +
     `const PROJECTS = ${JSON.stringify(pj, null, 2)};\n` +

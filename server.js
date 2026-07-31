@@ -34,10 +34,13 @@ function log(...a) {
 function herdr(args, timeout = 20000) {
   return new Promise(res => {
     execFile(CFG.herdr, args, { encoding: "utf8", timeout, maxBuffer: 4 * 1024 * 1024 },
-      (err, stdout) => {
-        if (err && !stdout) return res(null);
+      (err, stdout, stderr) => {
+        /* herdr prints error JSON on stderr; parse it too, or callers see a
+           silent null and misreport every failure as a timeout */
+        const text = (stdout || "").trim() || (err ? (stderr || "").trim() : "");
+        if (!text) return res(null);
         try {
-          const j = JSON.parse(stdout.trim().split("\n").pop());
+          const j = JSON.parse(text.split("\n").pop());
           res(j.result !== undefined ? j.result : j);
         } catch { res(stdout ? { raw: stdout.trim() } : null); }
       });
@@ -155,7 +158,8 @@ async function launch(id) {
   }
 
   const tab = await herdr(["tab", "create", "--workspace", wsId, "--cwd", p.path, "--label", "radar", "--focus"]);
-  let paneId = tab && (tab.pane_id || (tab.tab && tab.tab.pane_id) || (tab.pane && tab.pane.pane_id));
+  let paneId = tab && ((tab.root_pane && tab.root_pane.pane_id) ||
+    tab.pane_id || (tab.tab && tab.tab.pane_id) || (tab.pane && tab.pane.pane_id));
   const tabId = tab && (tab.tab_id || (tab.tab && tab.tab.tab_id));
   if (!paneId) {
     const panes = await herdr(["pane", "list"]);
@@ -164,9 +168,19 @@ async function launch(id) {
   }
   if (!paneId) return { ok: false, error: "herdr tab opened but no pane id came back" };
 
-  const name = `radar-${p.id}-${Date.now() % 100000}`;
-  const started = await herdr(["agent", "start", name, "--kind", "claude", "--pane", paneId, "--timeout", "60000"], 70000);
+  /* a pane in a just-created workspace is often "not an available shell" yet
+     (agent_pane_busy comes back instantly, before --timeout even applies):
+     give the shell a moment and retry rather than failing the whole launch */
+  let started = null;
+  for (let i = 0; i < 3 && (!started || started.error); i++) {
+    if (i) await new Promise(r => setTimeout(r, 1200 * i));
+    started = await herdr(["agent", "start", `radar-${p.id}-${Date.now() % 100000}`,
+      "--kind", "claude", "--pane", paneId, "--timeout", "60000"], 70000);
+    if (started && started.error) log("agent start attempt", i + 1, "on", paneId, "failed:", JSON.stringify(started.error));
+  }
   if (!started || started.error) return { ok: false, error: "claude did not start in the pane: " + JSON.stringify((started && started.error) || "timeout") };
+  const name = started.agent && started.agent.name;
+  if (!name) return { ok: false, error: "claude started but herdr returned no agent name" };
   const prompted = await herdr(["agent", "prompt", name, buildPrompt(p)], 20000);
   if (!prompted || prompted.error) return { ok: false, error: "claude started but the prompt was not accepted" };
 
@@ -201,7 +215,9 @@ const server = http.createServer(async (req, res) => {
       req.on("end", async () => {
         try {
           const { id } = JSON.parse(body || "{}");
-          json(res, 200, await launch(String(id || "")));
+          const out = await launch(String(id || ""));
+          if (!out.ok) log("launch failed:", id, "-", out.error);   /* error returns were invisible in the log */
+          json(res, 200, out);
         } catch (e) { json(res, 200, { ok: false, error: e.message }); }
       });
     } else { json(res, 404, { error: "not found" }); }

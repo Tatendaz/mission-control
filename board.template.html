@@ -945,7 +945,7 @@ PROJECTS.forEach((p,i)=>{
       <span class="acts">
         ${SRV && p.launch!==false ? `<button class="ic lch" aria-label="Start Claude on ${esc(p.name)} in Herdr" title="Open a Herdr space and start Claude on the next step">🐏</button>` : ""}
         <button class="ic pin" aria-label="Pin ${esc(p.name)}" aria-pressed="false" title="Pin to top">★</button>
-        <button class="ic copy" aria-label="Copy resume command for ${esc(p.name)}" title="Copy: cd ${p.path} &amp;&amp; claude">❯</button>
+        <button class="ic copy" aria-label="Copy resume command for ${esc(p.name)}" title="Copy: cd ${p.absPath || p.path} &amp;&amp; claude">❯</button>
         <button class="ic del" aria-label="Move ${esc(p.name)} to Trash" title="Move to Trash">✕</button>
       </span>
     </div>
@@ -977,7 +977,10 @@ PROJECTS.forEach((p,i)=>{
   });
   el.querySelector(".copy").addEventListener("click", e=>{
     const b = e.currentTarget;
-    navigator.clipboard.writeText(`cd ${p.path} && claude`).then(()=>{
+    /* absPath is absolute; the tilde display path would not expand inside
+       the quotes. Quote the path so spaces survive the paste into a shell. */
+    const dir = (p.absPath || p.path).replace(/'/g, `'\\''`);
+    navigator.clipboard.writeText(`cd '${dir}' && claude`).then(()=>{
       b.textContent = "✓"; b.classList.add("okd");
       setTimeout(()=>{ b.textContent = "❯"; b.classList.remove("okd"); }, 1200);
     });
