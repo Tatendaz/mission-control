@@ -29,7 +29,9 @@ maintain by hand will rot in a week.
   board refreshes. There is also a daily scheduled sweep and a Sweep button.
 - **Ideas from your wrist.** An Apple Watch Shortcut posts dictated ideas as
   GitHub issues into a private inbox repo; they appear in the board's Inbox tab.
-  See [docs/watch-inbox.md](docs/watch-inbox.md).
+  See [docs/watch-inbox.md](docs/watch-inbox.md). Its successor is specced:
+  offline audio capture with local transcription on your Mac,
+  [docs/voice-inbox-v2.md](docs/voice-inbox-v2.md).
 
 ## How it works
 
@@ -135,6 +137,12 @@ hazards first, then a suggested focus, then the inbox. Ten lines of markdown in
   nothing but file ideas at you.
 - `config.json`, `board.html`, `status/` and friends are gitignored: they are
   your data, not the tool.
+
+## Roadmap
+
+Planned work lives in [docs/roadmap.md](docs/roadmap.md). Headline item:
+voice inbox v2, which records audio offline on the watch and moves
+transcription to local models on your Mac.
 
 ## Not affiliated
 
