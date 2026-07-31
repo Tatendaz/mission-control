@@ -307,7 +307,8 @@ const server = http.createServer(async (req, res) => {
         icons: [{ src: "/icon.png", sizes: "1024x1024", type: "image/png" }],
       }));
     } else if (req.method === "GET" && u.pathname === "/icon.png") {
-      const icon = [path.join(HERE, "icons", "AppIcon-1024.png"), path.join(HERE, "app", "AppIcon-1024.png")]
+      const icon = [path.join(HERE, "icons", "AppIconBento-1024.png"),   /* the chosen brand icon */
+        path.join(HERE, "icons", "AppIcon-1024.png"), path.join(HERE, "app", "AppIcon-1024.png")]
         .find(f => fs.existsSync(f));
       if (!icon) return json(res, 404, { error: "no icon on disk" });
       res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" });

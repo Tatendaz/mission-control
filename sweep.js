@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* Project Radar sweeper.
+/* Mission Control sweeper.
    Reads ground truth (git checkouts, gh PRs, the ideas inbox, Claude session
    logs, scribe status files) and regenerates the marker-delimited regions of
    the board HTML, plus data.json (for the server), BOARD.md (for terminals),
@@ -507,7 +507,7 @@ function render(d) {
 
 function boardMd(d) {
   const L = [];
-  L.push(`# Project Radar — swept ${fmtStamp(NOW)}`);
+  L.push(`# Mission Control — swept ${fmtStamp(NOW)}`);
   L.push("");
   L.push(`${d.figures.workstreams} workstreams · ${d.figures.prs} open PRs · ${d.figures.unrescued} repos with un-rescued work · inbox ${d.inbox.length}`);
   L.push("");
