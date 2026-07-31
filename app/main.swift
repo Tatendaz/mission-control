@@ -51,7 +51,21 @@ final class Delegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKU
             p.arguments = ["kickstart", "gui/\(getuid())/\(SERVICE)"]
             try? p.run()
         }
-        guard tries < 25 else { return }
+        guard tries < 25 else {
+            /* don't strand the user on a blank window: say what's wrong, and
+               let the link restart the whole retry loop */
+            tries = 0
+            web.loadHTMLString("""
+                <body style="font: 15px -apple-system, sans-serif; background: #0B0E14; color: #E6E9F0;
+                             display: grid; place-items: center; height: 100vh; margin: 0">
+                <div style="text-align: center">
+                  <p>The Mission Control server isn't answering on port \(PORT).</p>
+                  <p><a href="\(BOARD)" style="color: #7AA2F7">Try again</a> — or check:
+                     <code>launchctl print gui/$UID/\(SERVICE)</code></p>
+                </div></body>
+                """, baseURL: nil)
+            return
+        }
         tries += 1
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { self.load() }
     }
