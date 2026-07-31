@@ -46,8 +46,10 @@
 - FluidAudio `fluidaudiocli` as the transcriber: reads .m4a natively, shares
   models and the custom vocabulary with FluidVoice, ~190x realtime. `yap`
   noted as the non-Apple-Silicon alternate.
-- Rejected for the default path: Voice Memos (iCloud-only transit, fragile
-  Group Container), Whisper Memos (cloud ASR), Shortcuts-only capture (cannot
+- Rejected for the default path: Voice Memos (automatic cross-device sync is
+  iCloud-dependent; it records locally and exports manually, but offers no
+  automatic LAN or encrypted-overlay queue, and its Group Container is
+  fragile), Whisper Memos (cloud ASR), Shortcuts-only capture (cannot
   record audio headlessly; cannot record on watchOS at all), Syncthing as
   transport (1 to 2 h/day background ceiling).
 - Ingest endpoint is a separate token-gated listener on port 8770; the main

@@ -100,8 +100,10 @@ opening the JPR watch app once, which flushes it immediately.
 One shortcut does the work; automations decide when it runs:
 
 1. Get File(s) from the JPR folder.
-2. For each: Get Contents of URL, `POST http://&lt;mac&gt;:8770/ingest`, bearer
-   token header, `Content-Type: audio/mp4`, file as body.
+2. For each: Get Contents of URL, `POST
+   http://&lt;mac-tailnet-ip&gt;:8770/ingest` (the Tailscale address, the
+   default transport; on the LAN-HTTP fallback this is the Mac's home-LAN IP
+   instead), bearer token header, `Content-Type: audio/mp4`, file as body.
 3. On HTTP 200: move the file to a `sent/` subfolder. On a timeout,
    connection failure, 5xx, or 507: leave it in place for the next trigger.
    On any other 4xx (bad token, unsupported type, over `maxUploadMB`): move
@@ -144,22 +146,28 @@ speaks one verb:
   trigger. Writes go to exactly one place: `inbox-audio/spool/` with a
   server-generated name (`YYYYMMDD-HHMMSS-<sha8>.m4a`). Client filenames are
   recorded as metadata, never used as paths.
-- The recording's identity is its full SHA-256, and storage commits before
-  identity does: the listener streams the upload into a temp file while
-  hashing, then atomically renames it into `spool/` and creates
-  `claims/<sha256>` (`O_EXCL`), in that order. A duplicate is a hash whose
-  **complete file** already exists in spool, archive, or failed; it is
-  acknowledged with 200 and not stored again, so courier retries never
-  double-store or double-count the quota. On startup the listener sweeps
-  temp files and claims with no backing file, so a crash mid-upload can
-  never wedge a recording.
+- The recording's identity is its full SHA-256, and the claim is the gate to
+  publication: the listener streams the upload into a temp file while
+  hashing, then creates `claims/<sha256>` (`O_EXCL`), then renames the temp
+  file into `spool/`. Two concurrent uploads of the same recording race on
+  the claim, not on the spool: the loser's `O_EXCL` fails, its temp file is
+  deleted, and it is acknowledged with 200 like any duplicate, so nothing
+  double-stores or double-counts the quota. On startup the listener sweeps
+  leftover temp files and reclaims claims with no backing spool, archive, or
+  failed file (the crash-between-claim-and-rename case), so no crash can
+  wedge a recording.
 - No exec, no reads, no other routes. A leaked token buys an attacker the
-  ability to feed audio into the pipeline: it fills a capped spool, gets
-  transcribed, and lands as issues in the private inbox repo until you notice
-  the junk, delete it, and rotate the token (re-mint, re-paste into the
-  Shortcut). The worker treats every transcript as untrusted text and the
-  board already escapes issue-derived strings at both render layers, so junk
-  stays junk. The token cannot launch, read, or reach anything else.
+  ability to feed audio into the pipeline, and the pipeline bounds what that
+  is worth: the listener rate-limits to 60 requests per hour per token, the
+  worker transcribes one file at a time, and the filer stops at
+  `maxIssuesPerDay` (default 50), after which recordings stay spooled and
+  the hazard chip fires. So the worst case is junk issues in the private
+  inbox repo and a wedged intake until you clean up: delete the junk issues,
+  clear the spool, rotate the token (re-mint, re-paste into the Shortcut).
+  That temporary denial of intake is an accepted risk; what is not at risk:
+  the worker treats every transcript as untrusted text, the board already
+  escapes issue-derived strings at both render layers, and the token cannot
+  launch, read, or reach anything else.
 
 **Transport, in order of preference.** The default is
 [Tailscale](https://tailscale.com/kb/1232/derp-servers): the Shortcut posts to
@@ -180,14 +188,18 @@ told to trust one; Tailscale is the encryption story.
 CLI does batch files:
 
 ```sh
-git clone https://github.com/FluidInference/FluidAudio && cd FluidAudio
-swift build -c release --product fluidaudiocli   # binary: .build/release/fluidaudiocli
+git clone -b v0.15.5 https://github.com/FluidInference/FluidAudio && cd FluidAudio
+swift build -c release --product fluidaudiocli
+install -m 755 .build/release/fluidaudiocli ~/.local/bin/   # where config's `cli` points
 
 fluidaudiocli transcribe spool/20260731-071502-a1b2c3d4.m4a \
   --model-version v3 --language en \
   --custom-vocab "$HOME/Library/Application Support/FluidVoice/parakeet_custom_vocabulary.json" \
   --output-json out.json
 ```
+
+The clone pins the release tag the worker was tested against; bumps are a
+deliberate config-and-retest step, not a drive-by.
 
 The facts that make it the right engine here:
 
@@ -211,7 +223,8 @@ The facts that make it the right engine here:
 Engines are pluggable behind one contract: the worker normalizes whatever the
 engine emits into `{ text, confidence | null, words | null }` and everything
 downstream consumes only that. `fluidaudio` fills all three from
-`--output-json`. The alternate for machines without Apple Silicon, or with a
+`--output-json` (its JSON names the timing array `wordTimings`; the worker's
+adapter maps it to `words`). The alternate for machines without Apple Silicon, or with a
 macOS 26 SpeechAnalyzer preference, is [`yap`](https://github.com/finnvoor/yap)
 (`brew install yap`, no model download): it emits plain text with no
 confidence, so `confidence` is `null` and the issue footer prints
@@ -219,7 +232,11 @@ confidence, so `confidence` is `null` and the issue footer prints
 
 ### 5. Filer: the transcript becomes an issue
 
-The worker files into the same `inboxRepo` v1 uses, via the already-authed `gh`:
+The worker files into the same `inboxRepo` v1 uses, via the already-authed
+`gh`. Setup gains one line over v1: `gh label create voice --repo
+<you>/<inbox-repo>`, because `gh issue create --label` fails on a label that
+does not exist (the filer also handles that error by creating the label once
+and retrying).
 
 ```sh
 gh issue create --repo <you>/<inbox-repo> --label voice \
@@ -232,28 +249,34 @@ gh issue create --repo <you>/<inbox-repo> --label voice \
   id: <full sha-256 of the audio>"
 ```
 
-An empty or whitespace-only transcript never becomes an issue: it means
-silence or an engine failure, so the recording moves to `failed/` with the
-error `empty transcript` and is flagged no-retry (the same audio would
-transcribe empty again); the hazard chip brings it to a human.
+Every `failed/` entry carries a sidecar `<name>.error.json` recording the
+error and a `retry` flag; the retry pass processes only `retry: true`. An
+empty or whitespace-only transcript never becomes an issue: it means silence
+or an engine failure, so the recording moves to `failed/` with
+`{"error": "empty transcript", "retry": false}` (the same audio would
+transcribe empty again) and the hazard chip brings it to a human. Transient
+errors (engine crash, `gh` network failure) write `retry: true`.
 
-Two implementation rules are load-bearing here. First, the worker invokes
+Three implementation rules are load-bearing here. First, the worker invokes
 `gh` through an argument array (`execFile`, no shell): transcripts are spoken
-text and will contain quotes, backticks, and dollar signs sooner or later.
-Second, the `id:` line makes filing idempotent: before creating, the filer
-searches the inbox repo for any issue, open or closed, containing the
-recording's SHA-256 (`gh issue list --state all --search "<sha256>
-in:body"`), so a crash between issue creation and archiving cannot produce a
-duplicate when the file is retried. The metadata footer (recorded-at,
-duration, confidence, source device, id) is the full list of what accompanies
-the transcript off the machine; the archive path names a file that stays
-local.
+text and will eventually contain quotes, backticks, and dollar signs. Second,
+filing is single-writer by construction: one worker process drains the spool
+serially, so the `id:` lookup guards crash-retry, not concurrency. Before
+creating, the filer searches the inbox repo for any issue, open or closed,
+containing the recording's SHA-256 (`gh issue list --state all --search
+"<sha256> in:body"`); a crash between issue creation and archiving therefore
+cannot produce a duplicate when the file is retried. Third, a lookup that
+errors means do-not-create: the file stays spooled for the next pass rather
+than risking a duplicate. The metadata footer (recorded-at, duration,
+confidence, source device, id) is the full list of what accompanies the
+transcript off the machine; the archive path names a file that stays local.
 
 Titles are a truncation heuristic in v2.0; anything smarter must run locally or
 not at all (open question below). After filing, audio moves `spool/ →
 archive/`, the transcript is kept as a sidecar `.txt` next to it, and the
 server gets the same re-sweep nudge a scribe write triggers today. Failures
-move to `failed/` with the error, and retry on the next pass.
+move to `failed/` with their error sidecar; the ones marked retryable rejoin
+the next pass.
 
 Neither holding area grows without bound. `archive/` is pruned on each worker
 pass after `archiveRetainDays` (default 90); the issue is the durable record,
@@ -279,8 +302,9 @@ case: open the watch app once). The files sit in On My iPhone. Arriving home,
 the SSID automation fires, posts each file, moves it to `sent/`. The listener
 spools, the worker transcribes and files, the board re-sweeps. Every leg
 persists across restarts of its device or process; no leg depends on the
-previous one having run recently. The 21:00 automation and the `failed/` retry
-pass sweep up anything the happy path missed.
+previous one having run recently. The 21:00 automation and the `failed/`
+retry pass (`retry: true` entries only) sweep up anything the happy path
+missed.
 
 ## Phases
 
@@ -343,10 +367,16 @@ string match in the filer.
   "customVocab": "~/Library/Application Support/FluidVoice/parakeet_custom_vocabulary.json",
   "maxUploadMB": 100,
   "maxSpoolMB": 2048,
+  "maxIssuesPerDay": 50,
   "archiveRetainDays": 90,
   "stuckAfterMinutes": 30
 }
 ```
+
+Path values (`cli`, `customVocab`) accept a leading `~`; the config loader
+expands it to the home directory before any `execFile`, which never does that
+expansion itself. The install step above is what puts the built binary at the
+path `cli` names.
 
 The audio directory is deliberately not configurable: it is always
 `inbox-audio/` (spool, archive, failed) inside the Mission Control directory,

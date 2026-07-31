@@ -5,9 +5,11 @@
 
 ## Summary
 Docs-only. Adds the accepted design for voice inbox v2 (offline audio capture
-on watch/iPhone, LAN-only transfer, local transcription on the Mac via
-FluidAudio, transcript filed as a GitHub issue), plus a project roadmap that
-carries it, and cross-links from the README and the v1 watch-inbox doc.
+on watch/iPhone, transfer over an end-to-end encrypted Tailscale tunnel by
+default with plain home-LAN HTTP as the labeled fallback, local transcription
+on the Mac via FluidAudio, transcript filed as a GitHub issue), plus a project
+roadmap that carries it, and cross-links from the README and the v1
+watch-inbox doc.
 
 ## Motivation
 v1 transcribes on the watch with Apple's dictation stack: 9.0% word error rate
