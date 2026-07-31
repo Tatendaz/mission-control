@@ -14,3 +14,7 @@ app/*.app/
 node_modules/
 venv/
 .DS_Store
+
+# python build artifacts
+__pycache__/
+*.pyc

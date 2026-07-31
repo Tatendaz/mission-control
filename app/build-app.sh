@@ -5,8 +5,16 @@
 set -e
 cd "$(dirname "$0")"
 ROOT="$(cd .. && pwd)"
-NODE="$(command -v node || echo /opt/homebrew/bin/node)"
-PORT="$($NODE -p 'JSON.parse(require("fs").readFileSync("'"$ROOT"'/config.json","utf8")).port' 2>/dev/null || echo 8765)"
+NODE="$(command -v node || true)"
+if [ -z "$NODE" ]; then
+  echo "build-app.sh: node is not on PATH. Install Node 18+ and re-run." >&2
+  exit 1
+fi
+PORT="$("$NODE" -p 'JSON.parse(require("fs").readFileSync("'"$ROOT"'/config.json","utf8")).port ?? 8765' 2>/dev/null || echo 8765)"
+case "$PORT" in
+  ''|*[!0-9]*) PORT=8765 ;;
+  *) [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] || PORT=8765 ;;
+esac
 
 APP="Mission Control.app"
 rm -rf "$APP"
@@ -16,8 +24,15 @@ cat > "$APP/Contents/MacOS/mission-control" <<SH
 #!/bin/sh
 HEALTH="http://localhost:$PORT/health"
 BOARD="http://localhost:$PORT/"
+# the build-time node may have moved (nvm, reinstall): fall back to PATH
+NODE="$NODE"
+[ -x "\$NODE" ] || NODE="\$(command -v node || true)"
+if [ -z "\$NODE" ]; then
+  osascript -e 'display alert "Mission Control" message "Node is not installed or not on PATH."' >/dev/null 2>&1
+  exit 1
+fi
 if ! curl -s -m 2 -o /dev/null "\$HEALTH"; then
-  cd "$ROOT" && nohup "$NODE" server.js >/dev/null 2>&1 &
+  cd "$ROOT" && nohup "\$NODE" server.js >/dev/null 2>&1 &
   i=0; while [ \$i -lt 24 ]; do
     curl -s -m 1 -o /dev/null "\$HEALTH" && break
     sleep 0.5; i=\$((i+1))
