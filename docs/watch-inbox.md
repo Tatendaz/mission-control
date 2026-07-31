@@ -56,5 +56,6 @@ Then in the Shortcut's info sheet, toggle **Show on Apple Watch**. Launch via
 
 Ideas show in the board's **Inbox** tab after the next sweep. Weekly, file each
 into a project's backlog and close the issue (the card's ✓ copies the close
-command). Paid upgrades that post into the same repo if dictation quality ever
-hurts: Whisper Memos (webhooks), Just Press Record (local transcription).
+command). If dictation quality hurts or you need offline capture, the planned
+replacement is [voice inbox v2](voice-inbox-v2.md): record audio on the watch,
+transcribe locally on your Mac, file into this same repo.
