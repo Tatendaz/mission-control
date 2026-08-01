@@ -155,7 +155,6 @@
   /* the board breaks out of the rail and the measure to fit the card wall,
      and starts right at the tabs: every pixel above the fold is cards */
   #board { width: 100%; grid-template-columns: 1fr; padding-top: 30px; }
-  #chgNote { margin-left: auto; padding-bottom: 10px; font-size: 12.5px; font-weight: 600; color: var(--ink-1); }
   .hintline { color: var(--ink-3); font-size: 12.5px; margin-top: 26px; max-width: none; }
   .hintline .k { color: var(--ink-2); font-weight: 600; }
   h2 { font: 700 30px/1.15 var(--display); letter-spacing: -0.025em; margin-bottom: 10px; }
@@ -291,10 +290,6 @@
     background: var(--cat-bg); color: var(--cat-fg);
     box-shadow: inset 0 0 0 1px var(--cat-ring);
     position: relative;
-  }
-  .entry.chg .mono-tile::after {
-    content: ""; position: absolute; top: -3px; right: -3px; width: 7px; height: 7px;
-    border-radius: 50%; background: var(--warning); box-shadow: 0 0 0 2px var(--surface);
   }
   .entry .tt { min-width: 0; flex: 1; }
   .entry h4 { font: 650 16.5px/1.25 var(--display); letter-spacing: -0.015em; overflow-wrap: anywhere; }
@@ -489,6 +484,61 @@
   }
   @keyframes pop { from { translate: 0 0; opacity: 1; } to { translate: var(--dx) var(--dy); opacity: 0; scale: .4; } }
 
+  /* ── progress layer: today strip, delta chips, rings, week strips ──
+     Renders the delta, not just the state: what moved today, before what's
+     wrong. Wins come from the sweeper's DELTA block; nothing is self-reported. */
+  #delta { border-bottom: 1px solid var(--grid); padding: 16px 1px 15px; }
+  #delta[hidden] { display: none; }
+  #delta .dk {
+    font: 600 10.5px var(--mono); text-transform: uppercase; letter-spacing: 0.1em;
+    color: var(--ink-3); margin-bottom: 9px;
+  }
+  #delta .dstats { display: flex; flex-wrap: wrap; gap: 6px 32px; align-items: baseline; }
+  #delta .dstat { display: flex; align-items: baseline; gap: 8px; }
+  #delta .dstat b {
+    font: 700 27px/1 var(--display); letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums; color: var(--ink-1);
+  }
+  #delta .dstat.hero b { color: var(--good); }
+  #delta .dstat span { font-size: 12.5px; color: var(--ink-2); }
+  #delta .dledger { margin-top: 11px; display: grid; gap: 4px; }
+  #delta .dwin { font-size: 13px; color: var(--ink-2); max-width: 90ch; }
+  #delta .dwin::before { content: "— "; color: var(--good); font-weight: 700; }
+  #delta .dwin.t1 { color: var(--ink-1); font-weight: 550; }
+  #delta .calm { font-size: 13.5px; color: var(--ink-2); }
+  #delta .fact { margin-top: 9px; font: 600 12px var(--mono); color: var(--good); }
+  #delta .dclear { margin: 10px 0 0; font: 600 10.5px var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-3); }
+
+  /* reveal ceremony: 80ms hit flash on a changed card, chip entrance */
+  .entry.dflash { animation: dflash .55s var(--out); }
+  @keyframes dflash {
+    0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--good) 55%, transparent); }
+    18% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--good) 42%, transparent); }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+  .sev.popin { animation: chipin .4s var(--out) backwards; }
+  @keyframes chipin { from { opacity: 0; translate: 0 4px; scale: .92; } }
+  .floater {
+    position: fixed; z-index: 85; pointer-events: none;
+    font: 700 12px var(--mono); color: var(--good);
+    animation: floatup 1.3s var(--out) forwards;
+  }
+  @keyframes floatup { from { opacity: 0; translate: 0 4px; } 20% { opacity: 1; } to { opacity: 0; translate: 0 -24px; } }
+
+  /* all-clear ring: four arcs tracing the tile's own rounded-square outline,
+     one per side — tree clean, pushed, no stale PR, no satellite clone ahead */
+  .ring { position: absolute; inset: -4.5px; width: 42px; height: 42px; pointer-events: none; }
+  .ring rect { fill: none; stroke-width: 2; stroke-linecap: round; stroke: var(--baseline); opacity: .5; }
+  .ring rect.onseg { stroke: var(--good); opacity: .9; }
+  .entry.clear .mono-tile { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--good) 40%, var(--cat-ring)); }
+
+  /* 12-week intensity strip: gaps are neutral, never red; no streak number */
+  .wkstrip { display: flex; gap: 3px; margin: 0 0 9px; }
+  .wkstrip i { width: 9px; height: 9px; border-radius: 2px; background: var(--wash); }
+  .wkstrip i.w1 { background: color-mix(in oklab, var(--cat) 28%, var(--surface)); }
+  .wkstrip i.w2 { background: color-mix(in oklab, var(--cat) 58%, var(--surface)); }
+  .wkstrip i.w3 { background: var(--cat); }
+
   /* ── motion (triggered, guarded; never looping on content) ── */
   @media (prefers-reduced-motion: no-preference) {
     #overview .content { animation: rise .55s cubic-bezier(.16,1,.3,1) both; }
@@ -668,9 +718,9 @@ Swept Jul 30, 08:00
       <button class="tab" role="tab" id="tabInbox" aria-selected="false" data-tab="inbox">Inbox<span class="n" id="nInbox"></span></button>
       <button class="tab" role="tab" id="tabTrash" aria-selected="false" data-tab="trash">Trash<span class="n" id="nTrash"></span></button>
       <span class="tind" aria-hidden="true"></span>
-      <span id="chgNote" hidden></span>
       <button id="emptyTrash" class="btn danger" hidden>Empty trash</button>
     </div>
+    <div id="delta" hidden aria-live="polite"></div>
     <div class="filters" id="filters" role="group" aria-label="Filter projects"></div>
     <p id="trashHint" hidden>Deleted cards keep their data. Restore puts one back on the board; delete forever hides it for good, even after the radar regenerates.</p>
     <p id="inboxHint" hidden>Spoken ideas from the watch, straight off the ideas-inbox repo. Open one on GitHub, or copy its close command once you have filed it. New captures appear on the next sweep.</p>
@@ -878,6 +928,14 @@ const INBOX = [
   }
 ];
 const REC = [["notes",0,"Jul 30","Weekly review session"],["acme-app",1,"Jul 29","Onboarding polish, PR open"],["acme-api",2,"Jul 28","v1.4.2 cut and shipped"],["build-log",12,"Jul 18","Agents post drafted, unpublished"],["ml-experiments",34,"Jun 26","Eval harness v2, then silence"]];
+const DELTA = {
+  "at": 1785400000000, "prevAt": 1785313600000, "prevHuman": "Jul 29, 08:00", "date": "2026-07-30",
+  "stats": { "pushed": 0, "commits": 0, "sessions": 0, "cleaned": 0, "merged": 0, "cleared": 0 },
+  "wins": [], "changed": [], "chips": {}, "fact": null,
+  "allClear": { "n": 1, "total": 3, "board": false, "first": false },
+  "rings": { "app": [false, true, false, true], "api": [true, true, true, true], "blog": [true, false, true, true] },
+  "weeks": { "app": [0,2,5,3,0,1,4,8,2,0,3,6], "api": [1,0,2,1,3,0,0,2,1,4,2,3], "blog": [0,0,1,0,2,0,0,0,3,1,0,2], "ml": [4,2,0,0,0,0,0,0,0,0,0,0] }
+};
 /* /SWEEP:DATA */
 const INBOX_REPO = "you/ideas-inbox";
 
@@ -906,7 +964,6 @@ const hue = id => {
 const TKEY = "radar-tombstones-v1";   /* {id:{d:ms, purged?:1}} survives regeneration */
 const PKEY = "radar-pins-v1";
 const SKEY = "radar-sort-v1";
-const LKEY = "radar-seen-v1";
 /* Any of these keys can be corrupt, hand-edited, or written by an older
    version. A bad value must degrade one feature, never take down the board. */
 const store = k => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } };
@@ -1220,6 +1277,8 @@ function update(){
   list.forEach(p=>grid.appendChild(cardEls.get(p.id)));
 
   fWrap.style.display = tab==="board" ? "" : "none";
+  const dEl = document.getElementById("delta");
+  if (dEl) dEl.style.display = tab==="board" ? "" : "none";
   hintEl.hidden = tab!=="trash";
   document.getElementById("inboxHint").hidden = tab!=="inbox";
   emptyBtn.hidden = !(tab==="trash" && trashP.length>0);
@@ -1227,8 +1286,6 @@ function update(){
   document.getElementById("iempty").hidden = !(tab==="inbox" && INBOX.length===0);
   document.getElementById("nomatch").hidden = !(q && ((tab==="board" && shownBoard===0) || (tab==="inbox" && INBOX.length>0 && shownInbox===0)));
   document.querySelector(".hintline").hidden = tab!=="board";
-  const cn = document.getElementById("chgNote");
-  cn.hidden = tab!=="board" || !cn.textContent;
   placeInd();
 }
 searchEl.addEventListener("input", ()=>{
@@ -1245,22 +1302,190 @@ searchEl.addEventListener("input", ()=>{
 });
 update();
 
-/* ── changed since your last visit ────────────────── */
+/* ── progress: today strip, delta chips, rings, week strips, reveal ──
+   DELTA comes from the sweeper (server truth, per-day fold). Every load gets a
+   static render; the count-up ceremony plays only on the reload right after
+   the Sweep button, flagged via sessionStorage. Background refreshes and
+   reduced-motion get the same information with no theater. */
 (function(){
-  const raw = store(LKEY);
-  const prev = isObj(raw) && isObj(raw.m) && isFinite(raw.t) ? raw : null;
-  const m = {}; PROJECTS.forEach(p=>m[p.id] = p.last||"");
-  if (prev && prev.m) {
-    const changed = PROJECTS.filter(p=> prev.m[p.id]!==undefined && prev.m[p.id]!==(p.last||""));
-    if (changed.length) {
-      changed.forEach(p=>cardEls.get(p.id).classList.add("chg"));
-      const note = document.getElementById("chgNote");
-      note.textContent = `${changed.length} card${changed.length>1?"s":""} updated since your last visit`;
-      note.hidden = false;
+  const D = typeof DELTA !== "undefined" ? DELTA : null;
+  const stripEl = document.getElementById("delta");
+  if (!D || !stripEl) return;
+  const isToday = D.date === new Date().toLocaleDateString("en-CA");
+  const S = D.stats || {};
+  const wins = (Array.isArray(D.wins) ? D.wins : [])
+    .filter(w => w && w.text).slice().sort((a,b)=>(a.tier||9)-(b.tier||9)).slice(0,6);
+  const hasWork = isToday && (S.pushed>0 || S.commits>0 || S.sessions>0 || wins.length>0);
+
+  const statList = () => {
+    const out = [];
+    if (S.pushed) out.push([S.pushed, `commit${S.pushed>1?"s":""} pushed`]);
+    else if (S.commits) out.push([S.commits, `commit${S.commits>1?"s":""} today`]);
+    if (S.merged) out.push([S.merged, `PR${S.merged>1?"s":""} merged`, 1]);
+    if (S.cleared) out.push([S.cleared, `hazard${S.cleared>1?"s":""} cleared`, 1]);
+    if (S.cleaned) out.push([S.cleaned, `tree${S.cleaned>1?"s":""} cleaned`]);
+    if (S.sessions) out.push([S.sessions, `session${S.sessions>1?"s":""}`]);
+    return out;
+  };
+  function renderStrip(){
+    let inner = `<div class="dk">Today</div>`;
+    if (hasWork) {
+      inner += `<div class="dstats">${statList().map(([n,l,h])=>
+        `<div class="dstat${h?" hero":""}"><b data-v="${n}">${n}</b><span>${esc(l)}</span></div>`).join("")}</div>`;
+      if (wins.length) inner += `<div class="dledger">${wins.map(w=>
+        `<div class="dwin${w.tier===1?" t1":""}">${esc(w.text)}</div>`).join("")}</div>`;
+      if (D.allClear && +D.allClear.total > 0)
+        inner += `<div class="dclear">${+D.allClear.n || 0} of ${+D.allClear.total} repos all-clear</div>`;
+    } else {
+      /* the strip always renders; only the delight inside it varies. Never guilt. */
+      const since = isToday && D.prevHuman ? `Quiet since ${esc(D.prevHuman)}. ` : "";
+      const clear = D.allClear && D.allClear.board ? "Nothing decayed and nothing is at risk." : "No new hazards.";
+      inner += `<div class="calm">${since}Board's holding steady. ${clear}</div>`;
+    }
+    if (isObj(D.fact) && D.fact.text && isToday) inner += `<div class="fact">${esc(D.fact.text)}</div>`;
+    stripEl.innerHTML = inner;
+    stripEl.hidden = false;
+  }
+  function renderChips(pop){
+    if (!isToday || !isObj(D.chips)) return;
+    Object.entries(D.chips).forEach(([id, list], k)=>{
+      const el = cardEls.get(id); if (!el || !Array.isArray(list)) return;
+      let row = el.querySelector(".e-flags");
+      if (!row) {
+        row = document.createElement("div"); row.className = "e-flags";
+        const anchor = el.querySelector(".desc");
+        if (anchor) anchor.after(row); else el.appendChild(row);
+      }
+      for (const t of list) {
+        if ([...row.children].some(c => c.dataset.dchip === String(t))) continue;
+        const span = document.createElement("span");
+        span.className = "sev ok" + (pop && !RM ? " popin" : "");
+        if (pop && !RM) span.style.animationDelay = Math.min(k, 8) * 90 + "ms";
+        span.dataset.dchip = String(t);
+        span.innerHTML = `<i>●</i>${esc(t)}`;
+        row.appendChild(span);
+      }
+    });
+  }
+  function renderRings(){
+    if (!isObj(D.rings)) return;
+    for (const [id, seg] of Object.entries(D.rings)) {
+      const el = cardEls.get(id); if (!el || !Array.isArray(seg) || seg.length !== 4) continue;
+      const tile = el.querySelector(".mono-tile");
+      if (!tile || tile.querySelector(".ring")) continue;
+      /* four equal arcs, one per side, gaps at all four corners; the top-right
+         gap doubles as the live-dot slot. Path runs clockwise from the top
+         edge: E = straight edge, A = corner arc. Sides: top = tree clean,
+         right = pushed, bottom = no stale PR, left = no satellite ahead. */
+      const W = 39, R = 11, E = W - 2*R, A = Math.PI*R/2, P = 4*E + 4*A, G = 7;
+      const cs = [0,1,2,3].map(i => (i+1)*E + (i+.5)*A);   /* TR BR BL TL corner centers */
+      const L = E + A - G;
+      const runs = [cs[3], cs[0], cs[1], cs[2]].map(c => c + G/2);   /* top right bottom left */
+      tile.insertAdjacentHTML("beforeend",
+        `<svg class="ring" viewBox="0 0 42 42" aria-hidden="true">` + runs.map((start, i) =>
+          `<rect class="${seg[i]?"onseg":""}" x="1.5" y="1.5" width="${W}" height="${W}" rx="${R}" stroke-dasharray="${L} ${P-L}" stroke-dashoffset="${-start}"></rect>`).join("") + `</svg>`);
+      if (seg.every(Boolean)) el.classList.add("clear");
     }
   }
-  /* refresh the snapshot at most every 6 hours so the markers survive same-day reloads */
-  if (!prev || Date.now()-prev.t > 216e5) localStorage.setItem(LKEY, JSON.stringify({ t: Date.now(), m }));
+  function renderWeeks(){
+    if (!isObj(D.weeks)) return;
+    for (const [id, wk] of Object.entries(D.weeks)) {
+      const el = cardEls.get(id); if (!el || !Array.isArray(wk) || el.querySelector(".wkstrip")) continue;
+      const cell = n => n===0 ? "" : n<3 ? "w1" : n<8 ? "w2" : "w3";
+      const div = document.createElement("div");
+      div.className = "wkstrip";
+      div.title = "Trailing 12 weeks: commits and sessions per week";
+      div.innerHTML = wk.slice(0,12).map(n=>`<i class="${cell(+n||0)}"></i>`).join("");
+      const details = el.querySelector("details");
+      if (details) details.parentNode.insertBefore(div, details);
+      else el.appendChild(div);
+    }
+  }
+  const themeDark = () => document.documentElement.dataset.theme === "dark" ||
+    (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme: dark)").matches);
+  function burst(el){
+    const r = el.getBoundingClientRect();
+    for (let i = 0; i < 22; i++){
+      const sp = document.createElement("span");
+      sp.className = "pop";
+      const a = Math.random()*Math.PI*2, dist = 55 + Math.random()*85;
+      sp.style.left = (r.left + r.width/2) + "px";
+      sp.style.top = (r.top + 34) + "px";
+      sp.style.background = HUES[i % HUES.length][themeDark() ? 0 : 1];
+      sp.style.setProperty("--dx", Math.cos(a)*dist + "px");
+      sp.style.setProperty("--dy", (Math.sin(a)*dist - 46) + "px");
+      document.body.appendChild(sp);
+      setTimeout(()=>sp.remove(), 900);
+    }
+  }
+  function floater(el, text){
+    const r = el.getBoundingClientRect();
+    const f = document.createElement("span");
+    f.className = "floater"; f.textContent = text;
+    f.style.left = Math.max(8, r.right - 84) + "px"; f.style.top = (r.top + 10) + "px";
+    document.body.appendChild(f);
+    setTimeout(()=>f.remove(), 1300);
+  }
+  const ease2 = t => 1 - 2 ** (-10 * t);
+  function countUpEl(b, end){
+    const t0 = performance.now();
+    b.textContent = "0";
+    requestAnimationFrame(function f(t){
+      const p = Math.min((t - t0)/800, 1);
+      if (p >= 1) { b.textContent = end; return; }   /* land exactly on the target */
+      b.textContent = Math.round(end * ease2(p));
+      requestAnimationFrame(f);
+    });
+  }
+
+  renderRings();
+  renderWeeks();
+  /* blocked storage must degrade to a static render, never abort the strip */
+  let fired = false;
+  try { fired = SRV && sessionStorage.getItem("radar-swept") === "1"; sessionStorage.removeItem("radar-swept"); } catch {}
+  if (fired && !RM && hasWork) {
+    /* the ceremony: beat → count-ups → card cascade (≤4/s) → one celebration.
+       aria-busy keeps the live region quiet until the numbers have settled. */
+    stripEl.setAttribute("aria-busy", "true");
+    setTimeout(()=>{
+      renderStrip();
+      stripEl.querySelectorAll(".dstat").forEach((st,i)=>{
+        const b = st.querySelector("b"), end = +b.dataset.v || 0;
+        st.style.opacity = 0;
+        setTimeout(()=>{
+          st.style.transition = "opacity .3s var(--out)"; st.style.opacity = 1;
+          countUpEl(b, end);
+        }, 60 + i*100);
+      });
+      const changed = (Array.isArray(D.changed) ? D.changed : [])
+        .map(id => cardEls.get(id)).filter(el => el && !el.classList.contains("hidden"));
+      changed.forEach((el, i)=>{
+        setTimeout(()=>{
+          el.classList.add("dflash");
+          setTimeout(()=>el.classList.remove("dflash"), 650);
+        }, 900 + i*280);
+      });
+      setTimeout(()=>renderChips(true), 900);
+      /* exactly one closing celebration, biggest win first; never stacked */
+      setTimeout(()=>{
+        const freshIds = new Set(Array.isArray(D.changed) ? D.changed : []);
+        const merged = wins.find(w => w.kind === "pr-merged" && w.id && freshIds.has(w.id));
+        const comeback = wins.find(w => w.kind === "comeback" && w.id && freshIds.has(w.id));
+        const target = merged || (D.allClear && D.allClear.first ? { board: true } : comeback);
+        if (!target) return;
+        if (target.board) { burst(document.querySelector(".tabs")); return; }
+        const el = cardEls.get(target.id);
+        if (el && !el.classList.contains("hidden")) {
+          burst(el);
+          floater(el, merged ? "merged ✓" : "welcome back");
+        }
+      }, 900 + changed.length*280 + 250);
+      setTimeout(()=>stripEl.setAttribute("aria-busy", "false"), 900 + changed.length*280 + 1600);
+    }, 80);
+  } else {
+    renderStrip();
+    renderChips(false);
+  }
 })();
 
 /* ── entrance choreography, once per session ──────── */
@@ -1397,7 +1622,10 @@ if (SRV) {
         const el = cardEls.get(p.id); if (!el) return;
         const dot = el.querySelector(".live"); if (!dot) return;
         const st = agents[p.label];
-        if (st && st!=="unknown") { dot.hidden = false; dot.className = "live "+st; dot.title = "Herdr agent: "+st; }
+        /* a ringed tile keeps its corner quiet: resting agents (idle/done) show
+           no dot there — only working/blocked earn the corner-gap slot */
+        const resting = st==="idle" || st==="done";
+        if (st && st!=="unknown" && !(resting && el.querySelector(".ring"))) { dot.hidden = false; dot.className = "live "+st; dot.title = "Herdr agent: "+st; }
         else dot.hidden = true;
       });
     } catch {}
@@ -1415,7 +1643,9 @@ if (SRV) {
       const poll = setInterval(async ()=>{
         try {
           const j = await (await fetch("/api/live", { cache:"no-store" })).json();
-          if (j.sweptAt > t0) { clearInterval(poll); location.reload(); }
+          /* the flag tells the reloaded page this was a deliberate sweep, so it
+             may play the reveal ceremony; background refreshes never set it */
+          if (j.sweptAt > t0) { clearInterval(poll); try { sessionStorage.setItem("radar-swept", "1"); } catch {} location.reload(); }
         } catch {}
       }, 1500);
       setTimeout(()=>{ clearInterval(poll); sweepBtn.disabled = false; sweepBtn.textContent = "Sweep"; }, 90000);

@@ -4,6 +4,8 @@ board.html
 data.json
 BOARD.md
 .cache.json
+history.jsonl
+.allclear-seen
 status/
 logs/
 backups/
