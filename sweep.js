@@ -133,14 +133,16 @@ function sessionMap() {
       if (!e.isDirectory()) continue;
       const d = path.join(root, e.name);
       let newest = 0, newestFile = null;
+      const mtimes = [];
       try {
         for (const f of fs.readdirSync(d)) {
           if (!f.endsWith(".jsonl")) continue;
           const m = fs.statSync(path.join(d, f)).mtimeMs;
+          mtimes.push(m);
           if (m > newest) { newest = m; newestFile = path.join(d, f); }
         }
       } catch {}
-      if (newest) dirs.push({ enc: e.name, newest, cwd: cwdOf(newestFile) });
+      if (newest) dirs.push({ enc: e.name, newest, cwd: cwdOf(newestFile), mtimes });
     }
   } catch {}
   return dirs;
@@ -191,6 +193,61 @@ function statusFor(id) {
   try { return JSON.parse(fs.readFileSync(path.join(HERE, "status", id + ".json"), "utf8")); }
   catch { return null; }
 }
+
+/* ── progress history: one JSONL line per sweep ──
+   The board renders state; motivation needs the delta. Each sweep appends a
+   compact snapshot of per-project metrics so the next sweep can say what
+   improved. Also feeds the per-day stats and, later, weekly recaps. */
+const HFILE = path.join(HERE, "history.jsonl");
+const dayKey = ts => new Date(ts).toLocaleDateString("en-CA");   /* 2026-08-01, local */
+const dayStartMs = (() => { const t = new Date(NOW); t.setHours(0, 0, 0, 0); return t.getTime(); })();
+function readHistory() {
+  let lines = [];
+  try {
+    lines = fs.readFileSync(HFILE, "utf8").split("\n").filter(Boolean).map(l => {
+      try { return JSON.parse(l); } catch { return null; }
+    }).filter(Boolean);
+  } catch {}
+  return lines;
+}
+function appendHistory(entry) {
+  try {
+    fs.appendFileSync(HFILE, JSON.stringify(entry) + "\n");
+    /* a sweep can fire many times a day; keep the file bounded. Truncate via
+       tmp + rename so a concurrent manual sweep never sees a half-written file */
+    const raw = fs.readFileSync(HFILE, "utf8").split("\n").filter(Boolean);
+    if (raw.length > 4000) {
+      const tmp = HFILE + ".tmp";
+      fs.writeFileSync(tmp, raw.slice(-2000).join("\n") + "\n");
+      fs.renameSync(tmp, HFILE);
+    }
+  } catch (e) { warn("history.jsonl not written: " + e.message); }
+}
+/* commit timestamps (ms) over the trailing 12 weeks, one git call.
+   Filtered to the repo's own author so fetched branches from other people
+   never count as your activity. */
+const AUTHOR_CACHE = new Map();
+function repoAuthor(p) {
+  if (!AUTHOR_CACHE.has(p)) AUTHOR_CACHE.set(p, sh(GIT(), ["-C", p, "config", "user.email"]) || null);
+  return AUTHOR_CACHE.get(p);
+}
+function commitTimes(p, remotesOnly) {
+  const since = new Date(NOW - 84 * DAY).toISOString();
+  const args = ["-C", p, "log", remotesOnly ? "--remotes" : "--all", "--since=" + since, "--format=%ct"];
+  const author = repoAuthor(p);
+  if (author) args.push("--fixed-strings", "--author=" + author);   /* literal match: emails can hold regex chars */
+  const out = sh(GIT(), args);
+  if (!out) return [];
+  return out.split("\n").filter(Boolean).map(t => (+t) * 1000);
+}
+const weekBuckets = tss => {
+  const wk = new Array(12).fill(0);
+  for (const t of tss) {
+    const i = 11 - Math.floor((NOW - t) / (7 * DAY));
+    if (i >= 0 && i <= 11) wk[i]++;
+  }
+  return wk;
+};
 
 /* ═══ assemble ═══ */
 function assemble() {
@@ -263,11 +320,13 @@ function assemble() {
         const rootName = tilde(path.dirname(sp));
         if (s.newestTs > scan.newestTs + 60000) {
           satNote = { path: sp, rootName, scan: s };
-          satHaz = { sev: "crit",
+          /* hazard keys are the stable identity for cleared-hazard detection:
+             titles embed live counts and day tallies, so they churn every sweep */
+          satHaz = { sev: "crit", key: `sat-ahead:${reg.id}`, pid: reg.id,
             title: `Newest ${reg.label || reg.id} work lives in a satellite clone`,
             body: `The most recent commit (${fmtDay(s.newestTs)}, <code>${esc(s.newestBranch)}</code>) is in <code>${esc(tilde(sp))}</code>, not the primary checkout, which last moved ${fmtDay(scan.newestTs)}. Anyone opening the primary sees stale state.` };
         } else if (s.dirty >= 5 || s.aheadTotal > 0) {
-          hazards.push({ sev: "warn",
+          hazards.push({ sev: "warn", key: `sat-unrescued:${reg.id}:${tilde(sp)}`, pid: reg.id,
             title: `Satellite clone of ${reg.label || reg.id} holds un-rescued work`,
             body: `<code>${esc(tilde(sp))}</code> has ${s.dirty ? s.dirty + " dirty files" : ""}${s.dirty && s.aheadTotal ? " and " : ""}${s.aheadTotal ? s.aheadTotal + " unpushed commits" : ""}. Reconcile it with the primary, then prune.` });
         }
@@ -300,6 +359,7 @@ function assemble() {
       return best;
     };
     const realCands = cands.map(norm);
+    const sessMts = [];   /* every matched session file's mtime, for today/weekly counts */
     for (const sd of sess) {
       let mine;
       if (sd.cwd) {
@@ -318,6 +378,7 @@ function assemble() {
           if (better) mine = false;
         }
       }
+      if (mine) sessMts.push(...(sd.mtimes || []));
       if (mine && sd.newest > ts) ts = sd.newest;
     }
     if (status && status.updated && status.updated > ts) ts = status.updated;
@@ -340,11 +401,12 @@ function assemble() {
       if (bits.length) p.flags.push([bits.join(", "), "warn"]);
       if (bits.length || satNote) unrescued++;
       if (!satHaz && (scan.aheadTotal >= 3 || (scan.dirty >= 5 && (scan.aheadTotal || scan.localOnly.length))))
-        hazards.push({ sev: "warn", title: `${reg.label || reg.id}: ${bits.join(" and ")}`,
+        hazards.push({ sev: "warn", key: `unpushed:${reg.id}`, pid: reg.id, title: `${reg.label || reg.id}: ${bits.join(" and ")}`,
           body: `On <code>${esc(scan.branch || "")}</code> in <code>${esc(tilde(abs))}</code>. That work exists on this disk only until it is pushed.` });
     }
     if (satHaz) hazards.push(satHaz);
-    if (reg.parked && p.days != null) p.flags.push([`paused ${p.days}d`, "warn"]);
+    /* parked is a choice the board respects, not a warning it repeats */
+    if (reg.parked && p.days != null) p.flags.push([`paused ${p.days}d`, ""]);
 
     /* aggregate cards: count dirty members */
     if (reg.aggregate && reg.members) {
@@ -368,6 +430,38 @@ function assemble() {
     p._abs = untilde(reg.path);
     p._noLaunch = !!reg.noLaunch;
     p._prs = prList.map(x => ({ number: x.number, title: x.title, url: x.url, createdAt: x.createdAt, repo: x.repository.nameWithOwner }));
+
+    /* progress metrics: what the delta engine diffs between sweeps.
+       cm/cp are day-cumulative (commits today, pushed-today via remote refs),
+       wk is trailing 12-week intensity (commits + sessions), recomputed fresh. */
+    let commitTss = [], pushedToday = 0;
+    if (reg.git && scan && !reg.aggregate) {
+      commitTss = commitTimes(abs, false);
+      pushedToday = commitTimes(abs, true).filter(t => t >= dayStartMs).length;
+    }
+    /* aggregate shelves catch orphan sessions from unregistered dirs; an
+       activity strip on a "nothing happens here" card reads as a bug */
+    const wk = reg.aggregate ? [] : weekBuckets(commitTss.concat(sessMts));
+    p._metrics = {
+      d: scan ? scan.dirty : null,
+      a: scan ? scan.aheadTotal : null,
+      lo: scan ? scan.localOnly.length : 0,
+      days: p.days,
+      sess: reg.aggregate ? 0 : sessMts.filter(m => m >= dayStartMs).length,
+      cm: commitTss.filter(t => t >= dayStartMs).length,
+      cp: pushedToday,
+      prs: p._prs.map(x => ({ u: x.url, t: x.title, n: x.number, r: x.repo })),
+    };
+    p._wk = wk.some(n => n > 0) ? wk : null;
+    /* all-clear ring, git cards only, one side per signal:
+       top = tree clean, right = everything pushed, bottom = no PR waiting past
+       30 days, left = no satellite clone holding newer work */
+    p._ring = reg.git && scan && !reg.aggregate ? [
+      scan.dirty === 0,
+      scan.aheadTotal === 0 && scan.localOnly.length === 0,
+      !p._prs.some(x => (NOW - new Date(x.createdAt).getTime()) / DAY > 30),
+      !satNote,
+    ] : null;
     projects.push(p);
   }
 
@@ -392,13 +486,17 @@ function assemble() {
   const oldest = prRows.filter(r => r.proj && !CFG.projects.find(x => x.id === r.proj)?.parked)
     .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))[0];
   if (oldest && (NOW - new Date(oldest.createdAt).getTime()) / DAY > 30)
-    hazards.push({ sev: "warn", title: `A pull request has been waiting ${Math.floor((NOW - new Date(oldest.createdAt).getTime()) / DAY)} days`,
+    /* keyed by project, not PR url: when the oldest stale PR merges and the
+       next-oldest takes over, the hazard identity holds instead of "clearing" */
+    hazards.push({ sev: "warn", key: `stale-pr:${oldest.proj}`, pid: oldest.proj, title: `A pull request has been waiting ${Math.floor((NOW - new Date(oldest.createdAt).getTime()) / DAY)} days`,
       body: `${esc(oldest.repo)} — "${esc(oldest.title)}", open since ${oldest.since}. It is blocked on a decision, not code.` });
 
   hazards.sort((a, b) => (a.sev === "crit" ? 0 : 1) - (b.sev === "crit" ? 0 : 1));
   const topHaz = hazards.slice(0, 6);
-  if (!topHaz.length) topHaz.push({ sev: "ok", title: "Nothing is at risk right now",
-    body: "No unpushed work, no dirty trees, no satellite clone ahead of its primary. The sweep found every checkout in sync." });
+  /* the empty state is the reward state: this line is what clearing the last
+     hazard earns, so it reads like a win, not an absence */
+  if (!topHaz.length) topHaz.push({ sev: "ok", title: "All clear — nothing is at risk",
+    body: "No unpushed work, no dirty trees, no satellite clone ahead of its primary. Every checkout is in sync. Go outside." });
 
   /* inbox */
   const inbox = gh.inbox.map(i => ({
@@ -422,8 +520,146 @@ function assemble() {
     prs: prRows.length, prRepos, unrescued, staleJunk,
   };
 
-  return { projects, hazards: topHaz, prRows, inbox, rec, figures, ghStale: gh.stale,
-    scannedDirs: uniq.length, sessionDirs: sess.length };
+  /* topHaz is the display slice; allHazards feeds the delta diff, so a hazard
+     falling off the top six never fakes a cleared-hazard win */
+  return { projects, hazards: topHaz, allHazards: hazards, prRows, inbox, rec, figures,
+    ghStale: gh.stale, scannedDirs: uniq.length, sessionDirs: sess.length };
+}
+
+/* ═══ progress: diff this sweep against the previous one ═══
+   A win is a state change outside the tool, hard to fake without doing the
+   work: PR merged, hazard cleared, unpushed work banked, a cold project
+   touched again. Never activity counts alone, never a score. */
+function progress(d, hist) {
+  const prev = hist.length ? hist[hist.length - 1] : null;
+  const todayLines = hist.filter(l => l.day === dayKey(NOW));
+  const label = p => p._label || p.id;
+  /* stable key + display title: cleared-hazard detection diffs keys, so a
+     count ticking inside a title never fakes a win */
+  const curHazK = (d.allHazards || d.hazards).filter(h => h.sev !== "ok").map(h => ({ k: h.key || h.title, t: h.title, p: h.pid || null }));
+  const live = d.projects.filter(p => p._metrics);
+  const wins = [];
+  let prChecks = 0;      /* gh pr view budget, sweep-wide */
+  let ghDown = false;    /* first failed probe stops the rest: no 8x timeout hang */
+
+  for (const p of live) {
+    const m = p._metrics, pm = prev && prev.projects && prev.projects[p.id];
+    if (!pm) continue;
+    if (pm.days >= 21 && m.days === 0)
+      /* the comeback is the exact moment a streak counter would punish */
+      wins.push({ id: p.id, tier: 1, kind: "comeback", n: pm.days,
+        text: `${label(p)}: first activity in ${pm.days} days — welcome back` });
+    else if (pm.days > 0 && m.days === 0)
+      wins.push({ id: p.id, tier: 2, kind: "fresh",
+        text: `${label(p)}: touched again after ${pm.days}d quiet` });
+    if (pm.a > 0 && m.a === 0)
+      wins.push({ id: p.id, tier: 2, kind: "banked", n: pm.a,
+        text: `${label(p)}: ${pm.a} unpushed commit${pm.a > 1 ? "s" : ""} banked to the remote` });
+    if (pm.d > 0 && m.d === 0)
+      wins.push({ id: p.id, tier: 2, kind: "cleaned", n: pm.d,
+        text: `${label(p)}: working tree clean, was ${pm.d} dirty` });
+    /* PR set difference against the previous sweep; a metrics entry without a
+       prs array (older format) yields no diff rather than a wall of false opens */
+    if (!Array.isArray(pm.prs)) continue;
+    const prevUrls = new Set(pm.prs.map(x => x.u));
+    const curUrls = new Set(m.prs.map(x => x.u));
+    for (const x of m.prs) if (!prevUrls.has(x.u))
+      wins.push({ id: p.id, tier: 2, kind: "pr-open", n: x.n, text: `Opened ${x.r}#${x.n}: ${x.t}` });
+    for (const x of pm.prs || []) {
+      /* read-only modes stay offline: no gh state checks in --dry / --json */
+      if (DRY || AS_JSON || ghDown || curUrls.has(x.u) || prChecks >= 8) continue;
+      prChecks++;
+      const out = sh(GH(), ["pr", "view", x.u, "--json", "state"], { timeout: 6000 });
+      if (out == null) { ghDown = true; continue; }
+      let state = null; try { state = JSON.parse(out).state; } catch {}
+      if (state === "MERGED")
+        wins.push({ id: p.id, tier: 1, kind: "pr-merged", n: x.n, text: `Merged ${x.r}#${x.n}: ${x.t}` });
+      else if (state === "CLOSED")
+        wins.push({ id: p.id, tier: 2, kind: "pr-closed", n: x.n, text: `Closed ${x.r}#${x.n}: ${x.t}` });
+    }
+  }
+  /* old history lines carry title-only `haz`; diff only against key-aware
+     lines so the format transition cannot fabricate cleared-hazard wins.
+     A project that GAINED a hazard this sweep gets no cleared-win either:
+     unpushed work migrating into a satellite clone is a move, not a win. */
+  const prevHazK = prev && Array.isArray(prev.hazK) ? prev.hazK.filter(ph => ph && ph.k) : [];
+  const curKeys = new Set(curHazK.map(c => c.k));
+  const gainedPids = new Set(curHazK.filter(c => c.p && !prevHazK.some(ph => ph.k === c.k)).map(c => c.p));
+  for (const ph of prevHazK)
+    if (!curKeys.has(ph.k) && !(ph.p && gainedPids.has(ph.p)))
+      wins.push({ id: null, tier: 1, kind: "hazard-cleared", text: `Hazard cleared: ${ph.t || ph.k}` });
+
+  /* fold the day: a sweep fires many times daily (scribe-triggered); the
+     emotional unit is the day, so the strip accumulates rather than resets */
+  const priorWins = todayLines.flatMap(l => l.wins || []);
+  const seenW = new Set(priorWins.map(w => w.kind + "|" + w.text));
+  const freshWins = wins.filter(w => !seenW.has(w.kind + "|" + w.text));
+  const todayWins = priorWins.concat(freshWins);
+
+  const sum = f => live.reduce((n, p) => n + f(p._metrics), 0);
+  const stats = {
+    pushed: sum(m => m.cp), commits: sum(m => m.cm), sessions: sum(m => m.sess),
+    cleaned: todayWins.filter(w => w.kind === "cleaned").length,
+    merged: todayWins.filter(w => w.kind === "pr-merged").length,
+    cleared: todayWins.filter(w => w.kind === "hazard-cleared").length,
+  };
+
+  const ringed = live.filter(p => p._ring);
+  const closedN = ringed.filter(p => p._ring.every(Boolean)).length;
+  /* board all-clear holds itself to the ring standard (clean, pushed, no stale
+     PR on every repo), not just "no hazard crossed a threshold" */
+  const boardClear = ringed.length > 0 && closedN === ringed.length && !curHazK.length;
+  /* "first ever" survives history truncation via a sticky marker file */
+  const seenFile = path.join(HERE, ".allclear-seen");
+  const seenBefore = fs.existsSync(seenFile) || hist.some(l => l.allClear);
+  const allClear = {
+    n: closedN, total: ringed.length, board: boardClear,
+    first: boardClear && hist.length > 0 && !seenBefore,
+  };
+  if (boardClear && !DRY && !AS_JSON) try { fs.writeFileSync(seenFile, String(NOW)); } catch {}
+
+  /* one delight fact at most; none on the first sweep ever, none if one fired
+     in the last 3 days: predictable rewards decay into entitlements */
+  let fact = null;
+  if (prev && !hist.some(l => l.fact && NOW - l.at < 3 * DAY)) {
+    const comeback = freshWins.find(w => w.kind === "comeback" && w.n >= 42);
+    if (comeback) fact = { kind: "comeback", text: comeback.text };
+    else if (allClear.first && ringed.length > 1)
+      fact = { kind: "all-clear", text: "Every project is clear at once — first time on record" };
+  }
+
+  /* per-card chips: today's accumulated change, at most two, gone at midnight */
+  const chips = {};
+  for (const p of live) {
+    const m = p._metrics, w4 = todayWins.filter(w => w.id === p.id);
+    const c = [];
+    const mg = w4.find(w => w.kind === "pr-merged");
+    if (mg) c.push(`#${mg.n} merged ✓`);
+    const cb = w4.find(w => w.kind === "comeback");
+    if (cb) c.push(`back after ${cb.n}d`);
+    if (m.cp > 0) c.push(`▲ ${m.cp} pushed today`);
+    else if (w4.some(w => w.kind === "banked")) c.push(`unpushed work banked ✓`);
+    if (w4.some(w => w.kind === "cleaned")) c.push(`tree clean ✓`);
+    else if (m.cm > 0 && !m.cp) c.push(`${m.cm} commit${m.cm > 1 ? "s" : ""} today`);
+    if (c.length) chips[p.id] = c.slice(0, 2);
+  }
+
+  const delta = {
+    at: NOW, prevAt: prev ? prev.at : 0, prevHuman: prev ? fmtStamp(prev.at) : "",
+    date: dayKey(NOW), stats,
+    /* strongest first before capping, so a tier-1 win never falls off the end */
+    wins: todayWins.slice().sort((a, b) => (a.tier || 9) - (b.tier || 9)).slice(0, 12),
+    changed: [...new Set(freshWins.map(w => w.id).filter(Boolean))],
+    chips, allClear, fact,
+    rings: Object.fromEntries(ringed.map(p => [p.id, p._ring])),
+    weeks: Object.fromEntries(live.filter(p => p._wk).map(p => [p.id, p._wk])),
+  };
+  const entry = {
+    at: NOW, day: dayKey(NOW),
+    projects: Object.fromEntries(live.map(p => [p.id, p._metrics])),
+    hazK: curHazK, wins: freshWins, fact, allClear: allClear.board,
+  };
+  return { delta, entry };
 }
 
 /* ═══ render ═══ */
@@ -446,7 +682,7 @@ const jsonInline = v => JSON.stringify(v, null, 2)
   .replace(/</g, "\\u003C")
   .replace(/\*\//g, "*\\/");
 
-function render(d) {
+function render(d, prog) {
   const file = path.join(HOME_DIR(), CFG.boardHtml);
   let html = fs.readFileSync(file, "utf8");
   const stampH = fmtStamp(NOW);
@@ -492,7 +728,7 @@ function render(d) {
   html = region(html, "FOOTER",
     `  <p>Swept ${stampH} from ${d.scannedDirs} git checkouts, an open-PR search, the ideas inbox, and ${d.sessionDirs} Claude Code session folders.${d.ghStale ? " GitHub data is from the last successful sweep; the network was unreachable this run." : ""}</p>`, true);
 
-  const pj = d.projects.map(({ _label, _abs, _noLaunch, _prs, ...rest }) =>
+  const pj = d.projects.map(({ _label, _abs, _noLaunch, _prs, _metrics, _wk, _ring, ...rest }) =>
     /* absPath feeds the copied shell command; the tilde path is display-only
        (a tilde inside the copy's single quotes would never expand) */
     ({ ...rest, label: _label, absPath: _abs, launch: !_noLaunch }));
@@ -500,17 +736,28 @@ function render(d) {
     `const SWEPT = ${jsonInline({ at: NOW, human: stampH })};\n` +
     `const PROJECTS = ${jsonInline(pj)};\n` +
     `const INBOX = ${jsonInline(d.inbox)};\n` +
-    `const REC = ${jsonInline(d.rec)};`, false);
+    `const REC = ${jsonInline(d.rec)};\n` +
+    `const DELTA = ${jsonInline(prog ? prog.delta : null)};`, false);
 
   return { file, html };
 }
 
-function boardMd(d) {
+function boardMd(d, prog) {
   const L = [];
   L.push(`# Mission Control — swept ${fmtStamp(NOW)}`);
   L.push("");
   L.push(`${d.figures.workstreams} workstreams · ${d.figures.prs} open PRs · ${d.figures.unrescued} repos with un-rescued work · inbox ${d.inbox.length}`);
   L.push("");
+  if (prog && prog.delta) {
+    const s = prog.delta.stats;
+    const pl = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+    L.push("## Today");
+    L.push(`${pl(s.pushed, "commit")} pushed · ${pl(s.commits, "commit")} · ${pl(s.sessions, "session")} · ${pl(s.merged, "PR")} merged · ${pl(s.cleared, "hazard")} cleared`);
+    if (prog.delta.wins.length) L.push("");
+    for (const w of prog.delta.wins) L.push(`- ${w.text}`);
+    if (prog.delta.fact) L.push(`- ${prog.delta.fact.text}`);
+    L.push("");
+  }
   L.push("## Hazards");
   for (const h of d.hazards) L.push(`- [${h.sev}] ${h.title} — ${h.body.replace(/<[^>]+>/g, "")}`);
   L.push("");
@@ -536,9 +783,11 @@ function boardMd(d) {
    Never process.exit() right after writing to stdout either — a piped stdout is
    async and the write is truncated at the pipe buffer (~64KB). */
 function main() {
+  const hist = readHistory();
   const d = assemble();
-  if (AS_JSON) { process.stdout.write(JSON.stringify(d, null, 2) + "\n"); return; }
-  const { file, html } = render(d);
+  const prog = progress(d, hist);
+  if (AS_JSON) { process.stdout.write(JSON.stringify({ ...d, delta: prog.delta }, null, 2) + "\n"); return; }
+  const { file, html } = render(d, prog);
   if (DRY) { process.stdout.write("dry run ok — all markers found, no files written\n"); return; }
 
   /* backup, then write */
@@ -556,7 +805,8 @@ function main() {
       launch: !p._noLaunch, lastWork: p.lastWork, next: p.next, flags: p.flags,
     })), inbox: d.inbox, figures: d.figures,
   }, null, 2));
-  fs.writeFileSync(path.join(HOME_DIR(), "BOARD.md"), boardMd(d));
-  process.stdout.write(`swept ${d.scannedDirs} checkouts · ${d.figures.prs} PRs · inbox ${d.inbox.length} · ${d.hazards.filter(h => h.sev === "crit").length} critical hazards · board + BOARD.md + data.json written${d.ghStale ? " (gh offline, cached)" : ""}\n`);
+  fs.writeFileSync(path.join(HOME_DIR(), "BOARD.md"), boardMd(d, prog));
+  appendHistory(prog.entry);
+  process.stdout.write(`swept ${d.scannedDirs} checkouts · ${d.figures.prs} PRs · inbox ${d.inbox.length} · ${d.hazards.filter(h => h.sev === "crit").length} critical hazards · ${prog.delta.wins.length} wins today · board + BOARD.md + data.json written${d.ghStale ? " (gh offline, cached)" : ""}\n`);
 }
 main();
