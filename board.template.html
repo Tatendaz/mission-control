@@ -609,10 +609,13 @@
   #sweepBtn:hover { color: var(--ink-1); border-color: var(--baseline); }
   #sweepBtn:disabled { opacity: .55; cursor: progress; }
   .mono-tile { position: relative; }
+  /* agent state dot lives in the card's bottom-right corner, on the Details
+     baseline and the content right edge, clear of the tile and its ring */
   .live {
-    position: absolute; top: -4px; right: -4px; width: 10px; height: 10px;
+    position: absolute; bottom: 22px; right: 16px; width: 10px; height: 10px;
     border-radius: 50%; border: 2px solid var(--surface); background: var(--ink-3);
   }
+  .entry.trashed .live { display: none; }
   .live.working { background: #3F8AF0; }
   .live.blocked { background: #b8860b; }
   .live.idle, .live.done { background: #178E68; }
@@ -1046,7 +1049,7 @@ PROJECTS.forEach((p,i)=>{
   if (p.cat==="stale" || p.cat==="junk" || p.flags.some(f=>f[0].includes("paused"))) el.classList.add("dim");
   el.innerHTML = `
     <div class="top">
-      <span class="mono-tile" aria-hidden="true">${(p.name[0]||"?").toUpperCase()}<span class="live" hidden></span></span>
+      <span class="mono-tile" aria-hidden="true">${(p.name[0]||"?").toUpperCase()}</span>
       <div class="tt">
         <h4>${esc(p.name)}</h4>
         <div class="path">${esc(p.path)}</div>
@@ -1073,7 +1076,8 @@ PROJECTS.forEach((p,i)=>{
       <button class="btn restore">Restore</button>
       <button class="btn danger forever">Delete forever</button>
       <span class="tmeta"></span>
-    </div>`;
+    </div>
+    <span class="live" hidden></span>`;
   grid.appendChild(el);
   cardEls.set(p.id, el);
 
@@ -1373,10 +1377,10 @@ update();
       const el = cardEls.get(id); if (!el || !Array.isArray(seg) || seg.length !== 4) continue;
       const tile = el.querySelector(".mono-tile");
       if (!tile || tile.querySelector(".ring")) continue;
-      /* four equal arcs, one per side, gaps at all four corners; the top-right
-         gap doubles as the live-dot slot. Path runs clockwise from the top
-         edge: E = straight edge, A = corner arc. Sides: top = tree clean,
-         right = pushed, bottom = no stale PR, left = no satellite ahead. */
+      /* four equal arcs, one per side, gaps centered on all four corners.
+         Path runs clockwise from the top edge: E = straight edge, A = corner
+         arc. Sides: top = tree clean, right = pushed, bottom = no stale PR,
+         left = no satellite ahead. */
       const W = 39, R = 11, E = W - 2*R, A = Math.PI*R/2, P = 4*E + 4*A, G = 7;
       const cs = [0,1,2,3].map(i => (i+1)*E + (i+.5)*A);   /* TR BR BL TL corner centers */
       const L = E + A - G;
@@ -1622,10 +1626,7 @@ if (SRV) {
         const el = cardEls.get(p.id); if (!el) return;
         const dot = el.querySelector(".live"); if (!dot) return;
         const st = agents[p.label];
-        /* a ringed tile keeps its corner quiet: resting agents (idle/done) show
-           no dot there — only working/blocked earn the corner-gap slot */
-        const resting = st==="idle" || st==="done";
-        if (st && st!=="unknown" && !(resting && el.querySelector(".ring"))) { dot.hidden = false; dot.className = "live "+st; dot.title = "Herdr agent: "+st; }
+        if (st && st!=="unknown") { dot.hidden = false; dot.className = "live "+st; dot.title = "Herdr agent: "+st; }
         else dot.hidden = true;
       });
     } catch {}

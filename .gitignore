@@ -5,6 +5,7 @@ data.json
 BOARD.md
 .cache.json
 history.jsonl
+history.jsonl.tmp
 .allclear-seen
 status/
 logs/
