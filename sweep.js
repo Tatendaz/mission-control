@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* Project Radar sweeper.
+/* Mission Control sweeper.
    Reads ground truth (git checkouts, gh PRs, the ideas inbox, Claude session
    logs, scribe status files) and regenerates the marker-delimited regions of
    the board HTML, plus data.json (for the server), BOARD.md (for terminals),
@@ -493,7 +493,9 @@ function render(d) {
     `  <p>Swept ${stampH} from ${d.scannedDirs} git checkouts, an open-PR search, the ideas inbox, and ${d.sessionDirs} Claude Code session folders.${d.ghStale ? " GitHub data is from the last successful sweep; the network was unreachable this run." : ""}</p>`, true);
 
   const pj = d.projects.map(({ _label, _abs, _noLaunch, _prs, ...rest }) =>
-    ({ ...rest, label: _label, launch: !_noLaunch }));
+    /* absPath feeds the copied shell command; the tilde path is display-only
+       (a tilde inside the copy's single quotes would never expand) */
+    ({ ...rest, label: _label, absPath: _abs, launch: !_noLaunch }));
   html = region(html, "DATA",
     `const SWEPT = ${jsonInline({ at: NOW, human: stampH })};\n` +
     `const PROJECTS = ${jsonInline(pj)};\n` +
@@ -505,7 +507,7 @@ function render(d) {
 
 function boardMd(d) {
   const L = [];
-  L.push(`# Project Radar — swept ${fmtStamp(NOW)}`);
+  L.push(`# Mission Control — swept ${fmtStamp(NOW)}`);
   L.push("");
   L.push(`${d.figures.workstreams} workstreams · ${d.figures.prs} open PRs · ${d.figures.unrescued} repos with un-rescued work · inbox ${d.inbox.length}`);
   L.push("");

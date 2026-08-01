@@ -6,6 +6,7 @@
   "sessionsDir": "~/.claude/projects",
   "inboxRepo": "you/ideas-inbox",
   "ghOwner": "you",
+  "ledeEstimate": "6 to 8",
   "gh": "/opt/homebrew/bin/gh",
   "git": "/usr/bin/git",
   "herdr": "/opt/homebrew/bin/herdr",

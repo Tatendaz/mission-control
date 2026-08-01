@@ -6,6 +6,8 @@
      POST /api/sweep   run sweep.js now (single-flight)
      POST /api/launch  { id } -> herdr workspace (create if missing) + new tab
                        + claude started with a prompt built from the card
+     GET  /manifest.webmanifest, /icon.png   installable PWA, so the board can
+                       live in the Dock as a real app with a running indicator
    Sweeps also run on a schedule (config sweepHour:sweepMinute daily), when the
    scribe drops a fresh status file (debounced), and at boot when data is stale.
 
@@ -49,11 +51,14 @@ function run(cmd, args, timeout = 20000) {
 }
 async function herdr(args, timeout = 20000) {
   const r = await run(CFG.herdr, args, timeout);
-  if (!r.ok && !r.out) return null;
+  /* herdr prints error JSON on stderr; parse it too, or callers see a
+     silent null and misreport every failure as a timeout */
+  const text = r.out || (typeof r.err === "string" ? r.err.trim() : "");
+  if (!text) return null;
   try {
-    const j = JSON.parse(r.out.split("\n").pop());
+    const j = JSON.parse(text.split("\n").pop());
     return j.result !== undefined ? j.result : j;
-  } catch { return r.out ? { raw: r.out } : null; }
+  } catch { return { raw: text }; }   /* non-JSON stderr must surface too, not read as a timeout */
 }
 
 /* ── sweep management ── */
@@ -180,7 +185,8 @@ async function launch(id) {
   }
 
   const tab = await herdr(["tab", "create", "--workspace", wsId, "--cwd", p.path, "--label", "radar", "--focus"]);
-  let paneId = tab && (tab.pane_id || (tab.tab && tab.tab.pane_id) || (tab.pane && tab.pane.pane_id));
+  let paneId = tab && ((tab.root_pane && tab.root_pane.pane_id) ||
+    tab.pane_id || (tab.tab && tab.tab.pane_id) || (tab.pane && tab.pane.pane_id));
   const tabId = tab && (tab.tab_id || (tab.tab && tab.tab.tab_id));
   if (!paneId) {
     const panes = await herdr(["pane", "list"]);
@@ -189,9 +195,19 @@ async function launch(id) {
   }
   if (!paneId) return { ok: false, error: "herdr tab opened but no pane id came back" };
 
-  const name = `radar-${p.id}-${Date.now() % 100000}`;
-  const started = await herdr(["agent", "start", name, "--kind", "claude", "--pane", paneId, "--timeout", "60000"], 70000);
+  /* a pane in a just-created workspace is often "not an available shell" yet
+     (agent_pane_busy comes back instantly, before --timeout even applies):
+     give the shell a moment and retry rather than failing the whole launch */
+  let started = null;
+  for (let i = 0; i < 3 && (!started || started.error); i++) {
+    if (i) await new Promise(r => setTimeout(r, 1200 * i));
+    started = await herdr(["agent", "start", `radar-${p.id}-${Date.now() % 100000}`,
+      "--kind", "claude", "--pane", paneId, "--timeout", "60000"], 70000);
+    if (started && started.error) log("agent start attempt", i + 1, "on", paneId, "failed:", JSON.stringify(started.error));
+  }
   if (!started || started.error) return { ok: false, error: "claude did not start in the pane: " + JSON.stringify((started && started.error) || "timeout") };
+  const name = started.agent && started.agent.name;
+  if (!name) return { ok: false, error: "claude started but herdr returned no agent name" };
   const prompted = await herdr(["agent", "prompt", name, buildPrompt(p)], 20000);
   if (!prompted || prompted.error) return { ok: false, error: "claude started but the prompt was not accepted" };
 
@@ -272,9 +288,31 @@ const server = http.createServer(async (req, res) => {
         let id;
         try { id = JSON.parse(body || "{}").id; }
         catch { return json(res, 400, { ok: false, error: "body is not JSON" }); }
-        try { json(res, 200, await launch(String(id || ""))); }
+        try {
+          const out = await launch(String(id || ""));
+          if (!out.ok) log("launch failed:", id, "-", out.error);   /* error returns were invisible in the log */
+          json(res, 200, out);
+        }
         catch (e) { log("launch failed:", e.stack || e.message); json(res, 200, { ok: false, error: e.message }); }
       });
+    } else if (req.method === "GET" && u.pathname === "/manifest.webmanifest") {
+      /* Chrome's "Install page as app" reads this and produces a real Dock app
+         (own icon, running-indicator dot) — something the script launcher in
+         /Applications can never provide */
+      res.writeHead(200, { "Content-Type": "application/manifest+json", "Cache-Control": "no-store" });
+      res.end(JSON.stringify({
+        name: "Mission Control", short_name: "Mission Control",
+        start_url: "/", display: "standalone",
+        background_color: "#0B0E14", theme_color: "#0B0E14",
+        icons: [{ src: "/icon.png", sizes: "1024x1024", type: "image/png" }],
+      }));
+    } else if (req.method === "GET" && u.pathname === "/icon.png") {
+      const icon = [path.join(HERE, "icons", "AppIconBento-1024.png"),   /* the chosen brand icon */
+        path.join(HERE, "icons", "AppIcon-1024.png"), path.join(HERE, "app", "AppIcon-1024.png")]
+        .find(f => fs.existsSync(f));
+      if (!icon) return json(res, 404, { error: "no icon on disk" });
+      res.writeHead(200, { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" });
+      res.end(await fsp.readFile(icon));
     } else { json(res, 404, { error: "not found" }); }
   } catch (e) {
     log("http error:", e.stack || e.message);
