@@ -27,7 +27,8 @@ session logs.
   idle, open-PR set, commits today, pushed today via remote refs, sessions
   today, 12-week intensity) appended to a new `history.jsonl` (one line per
   sweep, trimmed at 4000 lines). Each sweep diffs the previous line into wins:
-  PR merged (vanished PRs get a `gh pr view` state check, capped at 4), hazard
+  PR merged (vanished PRs get a `gh pr view` state check, capped at 8 per
+  sweep), hazard
   cleared, unpushed work banked, tree cleaned, comeback after 21+ idle days,
   PR opened. Wins fold per local day so scribe-triggered sweeps accumulate
   instead of resetting the story.
