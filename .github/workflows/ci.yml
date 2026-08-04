@@ -21,6 +21,10 @@ jobs:
           node --check server.js
           node --check scribe.js
 
+      - name: Engine unit tests
+        # node --test with a directory would also try to run smoke.sh; glob only the .test.js files
+        run: node --test test/*.test.js
+
       - name: Board template script parses
         # the bulk of the UI lives in one inline <script>; check it too
         run: |
@@ -44,4 +48,5 @@ jobs:
           cp config.example.json config.json
           cp board.template.html board.html
           node sweep.js --dry
-          test ! -f .cache.json   # --dry must write nothing
+          test ! -f .cache.json     # --dry must write nothing
+          test ! -f .prstate.json   # the PR-state cache included

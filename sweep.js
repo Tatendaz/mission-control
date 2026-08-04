@@ -12,7 +12,16 @@ const path = require("path");
 const { execFileSync } = require("child_process");
 
 const HERE = __dirname;
-const CFG = JSON.parse(fs.readFileSync(path.join(HERE, "config.json"), "utf8"));
+/* tolerate a missing config at load time: the module is require()d by tests,
+   which exercise the pure helpers and never touch CFG. main() still refuses.
+   A config that parses but lacks the required shape gets the same clean
+   refusal as a missing one, not a TypeError halfway through assemble(). */
+const CFG = (() => {
+  try {
+    const c = JSON.parse(fs.readFileSync(path.join(HERE, "config.json"), "utf8"));
+    return c && ["roots", "satelliteRoots", "projects", "ignoreDirs"].every(k => Array.isArray(c[k])) ? c : null;
+  } catch { return null; }
+})();
 const HOME = process.env.HOME || "/Users/" + (process.env.USER || "");
 const untilde = p => p && p.startsWith("~") ? HOME + p.slice(1) : p;
 /* the scribe resolves symlinks before matching; do the same here so a
@@ -30,8 +39,8 @@ const norm = p => {
 const tilde = p => p && p.startsWith(HOME) ? "~" + p.slice(HOME.length) : p;
 const HOME_DIR = () => path.resolve(HERE, untilde(CFG.home || "."));
 const DRY = process.argv.includes("--dry");
-const GIT = () => bin(CFG.git, "git");
-const GH = () => bin(CFG.gh, "gh");
+const GIT = () => bin(CFG && CFG.git, "git");
+const GH = () => bin(CFG && CFG.gh, "gh");
 const AS_JSON = process.argv.includes("--json");
 const NOW = Date.now();
 const DAY = 86400000;
@@ -115,8 +124,18 @@ function scanRepo(p, opts = {}) {
       if (ahead) r.aheadTotal += +ahead[1];
       if (!upstream) local.push({ name, t });
     }
-    /* newest first: the branch worth naming is the one you last touched */
-    r.localOnly = local.sort((a, b) => b.t - a.t).map(x => x.name);
+    /* newest first: the branch worth naming is the one you last touched.
+       A branch with no upstream only counts as unpushed while its tip holds
+       commits no remote ref contains — a leftover local branch whose PR merged
+       (remote side deleted) is banked work, not work at risk. Containment is
+       judged against the remote refs on disk, so it is only as fresh as the
+       last fetch; the behind-origin flag covers the never-fetched case. */
+    const MAX_CONTAIN_CHECKS = 16;
+    r.localOnly = local.sort((a, b) => b.t - a.t).filter((x, i) => {
+      if (i >= MAX_CONTAIN_CHECKS) return true;
+      const out = sh(GIT(), ["-C", p, "rev-list", "--max-count=1", "refs/heads/" + x.name, "--not", "--remotes"]);
+      return out !== "";   /* "" = fully contained; null (git error) stays flagged */
+    }).map(x => x.name);
   }
   r.branch = sh(GIT(), ["-C", p, "rev-parse", "--abbrev-ref", "HEAD"]);
   r.hasRemote = !!originOf(p);
@@ -164,28 +183,140 @@ function cwdOf(file) {
 }
 const encode = p => p.replace(/[^A-Za-z0-9]/g, "-");
 
-/* ── gh: open PRs + inbox issues, cached for offline runs ── */
+/* ── gh: open PRs + inbox issues + default-branch heads, cached for offline runs ── */
 function ghData() {
   const cacheFile = path.join(HERE, ".cache.json");
-  let prs = null, inbox = null;
+  let prs = null, inbox = null, heads = null;
   const q = `query{viewer{pullRequests(states:OPEN,first:100,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{number title url createdAt isDraft headRefName repository{nameWithOwner}}}}}`;
   const out = sh(GH(), ["api", "graphql", "-f", "query=" + q], { timeout: 25000 });
   if (out) { try { prs = JSON.parse(out).data.viewer.pullRequests.nodes; } catch {} }
+  /* where each repo's default branch actually is on GitHub, so a card whose
+     local checkout was never pulled can say so instead of reporting old truth.
+     One viewer-wide call: per-repo lookups would turn one 404 into a lost sweep. */
+  const hq = `query{viewer{repositories(first:100,ownerAffiliations:[OWNER],orderBy:{field:PUSHED_AT,direction:DESC}){nodes{nameWithOwner defaultBranchRef{name target{oid}}}}}}`;
+  const hout = sh(GH(), ["api", "graphql", "-f", "query=" + hq], { timeout: 25000 });
+  if (hout) {
+    try {
+      heads = {};
+      for (const n of JSON.parse(hout).data.viewer.repositories.nodes)
+        if (n && n.defaultBranchRef && n.defaultBranchRef.target)
+          heads[n.nameWithOwner.toLowerCase()] = { branch: n.defaultBranchRef.name, oid: n.defaultBranchRef.target.oid };
+    } catch { heads = null; }
+  }
   const iss = sh(GH(), ["issue", "list", "--repo", CFG.inboxRepo, "--state", "open",
     "--json", "number,title,createdAt,url", "--limit", "100"], { timeout: 25000 });
   if (iss) { try { inbox = JSON.parse(iss); } catch {} }
   let stale = false;
-  if (!prs || !inbox) {
+  if (!prs || !inbox || !heads) {
     try {
       const c = JSON.parse(fs.readFileSync(cacheFile, "utf8"));
       if (!prs) { prs = c.prs; stale = true; }
       if (!inbox) { inbox = c.inbox; stale = true; }
+      if (!heads) { heads = c.heads; stale = true; }
     } catch {}
   }
-  prs = prs || []; inbox = inbox || [];
+  prs = prs || []; inbox = inbox || []; heads = heads || {};
   /* read-only modes stay read-only: --dry and --json must not touch the disk */
-  if (!DRY && !AS_JSON) try { fs.writeFileSync(cacheFile, JSON.stringify({ prs, inbox, at: NOW })); } catch {}
-  return { prs, inbox, stale };
+  if (!DRY && !AS_JSON) try { fs.writeFileSync(cacheFile, JSON.stringify({ prs, inbox, heads, at: NOW })); } catch {}
+  return { prs, inbox, heads, stale };
+}
+
+/* true when the remote default branch has moved past everything this checkout
+   knows: its head is either absent locally (never fetched) or absent from the
+   local branch of the same name (fetched, not merged). Both mean the card is
+   describing an old world. */
+function remoteMovedAhead(p, branch, oid) {
+  if (!/^[0-9a-f]{40}$/i.test(oid || "")) return false;
+  if (sh(GIT(), ["-C", p, "cat-file", "-e", oid]) == null) return true;
+  if (sh(GIT(), ["-C", p, "rev-parse", "--verify", "-q", "refs/heads/" + branch]) == null) return false;
+  return sh(GIT(), ["-C", p, "merge-base", "--is-ancestor", oid, "refs/heads/" + branch]) == null;
+}
+
+/* ── next-step hygiene: a step anchored to a PR or issue that has since been
+   merged or closed is done, and repeating it teaches you to ignore the card ── */
+function parseNextRefs(step) {
+  const out = [];
+  const re = /\b(PRs?|pull requests?|issues?)\s+(#?\d+(?:\s*(?:,|and|&)\s*#\d+)*)/gi;
+  let m;
+  while ((m = re.exec(String(step || "")))) {
+    const type = m[1].toLowerCase().startsWith("i") ? "issue" : "pr";
+    for (const n of m[2].match(/\d+/g) || []) out.push({ type, n: +n });
+  }
+  return out;
+}
+/* a step may talk about another project's PR ("Merge promptups PR #8" on the
+   cicd card); the first other-project name found in the text wins, else the
+   card's own repo */
+function ghFullFor(reg, owner) {
+  const raw = (reg.ghRepo || reg.label || path.basename(untilde(reg.repoPath || reg.path) || "")).toLowerCase();
+  if (raw.includes("/")) return raw;
+  return owner ? owner.toLowerCase() + "/" + raw : null;
+}
+const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function stepRepoFor(step, reg, projects, owner) {
+  const named = new Set();
+  for (const other of projects) {
+    if (other === reg || other.aggregate) continue;
+    const toks = [other.ghRepo && other.ghRepo.split("/").pop(), other.label,
+      path.basename(untilde(other.repoPath || other.path) || "")].filter(t => t && t.length >= 3);
+    if (toks.some(t => new RegExp("\\b" + escRe(t) + "\\b", "i").test(step)))
+      named.add(ghFullFor(other, owner));
+  }
+  named.delete(null);
+  /* two repos named in one step: there is no right pairing of refs to repos,
+     so refuse to guess — pruneDoneNext keeps the step */
+  if (named.size > 1) return null;
+  if (named.size === 1) return [...named][0];
+  return ghFullFor(reg, owner);
+}
+/* PR/issue states, resolved from the open-PR list first, then a small budget
+   of gh lookups whose terminal answers (merged/closed never un-happen) persist
+   in .prstate.json so steady state costs zero calls */
+function makeRefResolver(openPrs, opts = {}) {
+  const file = opts.file || path.join(HERE, ".prstate.json");
+  const lookup = opts.lookup || ((type, repo, n) =>
+    sh(GH(), [type === "pr" ? "pr" : "issue", "view", String(n), "--repo", repo, "--json", "state"], { timeout: 8000 }));
+  let cache = {};
+  try { cache = JSON.parse(fs.readFileSync(file, "utf8")) || {}; } catch {}
+  const open = new Set((openPrs || []).map(pr => "pr:" + pr.repository.nameWithOwner.toLowerCase() + "#" + pr.number));
+  let checks = 0, fails = 0, dirty = false;
+  const resolve = (type, repo, n) => {
+    if (!repo) return null;
+    const k = type + ":" + repo + "#" + n;
+    /* the live open list outranks every cached answer, so a reopened PR
+       surfaces immediately even over a stale CLOSED entry */
+    if (open.has(k)) return "OPEN";
+    const c = cache[k];
+    /* MERGED never un-happens; CLOSED does (issues and PRs reopen), so it
+       only short-circuits for a week before being re-checked */
+    if (c && c.s === "MERGED") return c.s;
+    if (c && c.s === "CLOSED" && NOW - c.at < 7 * 24 * 3600000) return c.s;
+    /* OPEN answers age out fast, failed lookups slower: a PR closes tomorrow,
+       a nonexistent ref stays nonexistent and must not re-burn the budget */
+    if (c && NOW - c.at < (c.s === "OPEN" ? 6 : 24) * 3600000) return c.s === "UNKNOWN" ? null : c.s;
+    if (DRY || AS_JSON || fails >= 2 || checks >= 8) return null;
+    checks++;
+    const out = lookup(type, repo, n);
+    if (out == null) { fails++; cache[k] = { s: "UNKNOWN", at: NOW }; dirty = true; return null; }
+    fails = 0;
+    let s = null; try { s = JSON.parse(out).state; } catch {}
+    if (!s) return null;
+    cache[k] = { s, at: NOW }; dirty = true;
+    return s;
+  };
+  const save = () => { if (dirty && !DRY && !AS_JSON) try { fs.writeFileSync(file, JSON.stringify(cache)); } catch {} };
+  return { resolve, save };
+}
+function pruneDoneNext(next, reg, projects, owner, rr) {
+  return (next || []).filter(step => {
+    const refs = parseNextRefs(step);
+    if (!refs.length) return true;
+    const repo = stepRepoFor(step, reg, projects, owner);
+    if (!repo) return true;
+    /* drop only on positive evidence that every referenced item is finished;
+       an unknown state keeps the step — stale beats silently wrong */
+    return !refs.map(r => rr.resolve(r.type, repo, r.n)).every(s => s === "MERGED" || s === "CLOSED");
+  });
 }
 
 /* ── scribe status files ── */
@@ -277,13 +408,14 @@ function assemble() {
      Keying on the full name stops someoneelse/cli landing on your cli card. */
   const owner = (CFG.ghOwner || "").toLowerCase();
   const prsFor = reg => {
-    const raw = (reg.ghRepo || reg.label || path.basename(untilde(reg.repoPath || reg.path) || "")).toLowerCase();
-    if (raw.includes("/")) return byRepo[raw] || [];
-    if (owner) return byRepo[owner + "/" + raw] || [];
+    const full = ghFullFor(reg, owner);
+    if (full) return byRepo[full] || [];
     /* no ghOwner configured: fall back to a repo-name match across owners */
+    const raw = (reg.ghRepo || reg.label || path.basename(untilde(reg.repoPath || reg.path) || "")).toLowerCase();
     const hit = Object.keys(byRepo).filter(k => k.endsWith("/" + raw));
     return hit.length === 1 ? byRepo[hit[0]] : [];
   };
+  const refState = makeRefResolver(gh.prs);
 
   const projects = [];
   const hazards = [];
@@ -403,6 +535,23 @@ function assemble() {
       if (!satHaz && (scan.aheadTotal >= 3 || (scan.dirty >= 5 && (scan.aheadTotal || scan.localOnly.length))))
         hazards.push({ sev: "warn", key: `unpushed:${reg.id}`, pid: reg.id, title: `${reg.label || reg.id}: ${bits.join(" and ")}`,
           body: `On <code>${esc(scan.branch || "")}</code> in <code>${esc(tilde(abs))}</code>. That work exists on this disk only until it is pushed.` });
+      /* the inverse of unpushed: GitHub moved (remote merges, other machines)
+         and this checkout never pulled, so the card is narrating an old world.
+         Neutral, not a warning — nothing is at risk, the view is just stale.
+         No ghOwner configured: fall back to a unique repo-name match, the
+         same rule prsFor applies. */
+      let ghHead = null;
+      if (scan.branch && scan.hasRemote) {
+        const full = ghFullFor(reg, owner);
+        if (full) ghHead = gh.heads[full];
+        else {
+          const raw = (reg.ghRepo || reg.label || path.basename(untilde(reg.repoPath || reg.path) || "")).toLowerCase();
+          const hit = Object.keys(gh.heads).filter(k => k.endsWith("/" + raw));
+          if (hit.length === 1) ghHead = gh.heads[hit[0]];
+        }
+      }
+      if (ghHead && remoteMovedAhead(abs, ghHead.branch, ghHead.oid))
+        p.flags.push([`behind origin/${ghHead.branch} — pull to refresh`, ""]);
     }
     if (satHaz) hazards.push(satHaz);
     /* parked is a choice the board respects, not a warning it repeats */
@@ -425,6 +574,7 @@ function assemble() {
       if (satNote) p.lastWork += ` Newer work (${fmtDay(satNote.scan.newestTs)}) sits in the ${satNote.rootName} clone.`;
     } else if (!reg.aggregate && ts && !p.lastWork) p.lastWork = `Last session ${fmtDay(ts)}.`;
     if (status && status.next && status.next.length) p.next = status.next;
+    p.next = pruneDoneNext(p.next, reg, CFG.projects, owner, refState);
 
     p._label = reg.label || path.basename(untilde(reg.path));
     p._abs = untilde(reg.path);
@@ -464,6 +614,7 @@ function assemble() {
     ] : null;
     projects.push(p);
   }
+  refState.save();
 
   /* PR table rows: registry order, then external repos */
   const seen = new Set();
@@ -783,6 +934,7 @@ function boardMd(d, prog) {
    Never process.exit() right after writing to stdout either — a piped stdout is
    async and the write is truncated at the pipe buffer (~64KB). */
 function main() {
+  if (!CFG) { console.error("config.json missing or unreadable next to sweep.js"); process.exitCode = 1; return; }
   const hist = readHistory();
   const d = assemble();
   const prog = progress(d, hist);
@@ -809,4 +961,6 @@ function main() {
   appendHistory(prog.entry);
   process.stdout.write(`swept ${d.scannedDirs} checkouts · ${d.figures.prs} PRs · inbox ${d.inbox.length} · ${d.hazards.filter(h => h.sev === "crit").length} critical hazards · ${prog.delta.wins.length} wins today · board + BOARD.md + data.json written${d.ghStale ? " (gh offline, cached)" : ""}\n`);
 }
-main();
+/* the pure pieces, for test/engine.test.js; running as a script still sweeps */
+module.exports = { scanRepo, remoteMovedAhead, parseNextRefs, ghFullFor, stepRepoFor, makeRefResolver, pruneDoneNext };
+if (require.main === module) main();
