@@ -99,6 +99,8 @@ test("parseNextRefs: the shapes that appear in real next steps", () => {
     ["Post the v0.2.0 announcement, still unposted", []],
     ["Batch 4, the OHLC and session family, is the declared next", []],
     ["Review https://github.com/Tatendaz/yapui/pull/6 carefully", []],
+    ["Close the remaining issues 2 weeks after launch", []],
+    ["Ship PRs 6 and 7 properly", []],
   ];
   for (const [step, want] of cases)
     assert.deepStrictEqual(parseNextRefs(step), want, step);

@@ -193,7 +193,7 @@ function ghData() {
   /* where each repo's default branch actually is on GitHub, so a card whose
      local checkout was never pulled can say so instead of reporting old truth.
      One viewer-wide call: per-repo lookups would turn one 404 into a lost sweep. */
-  const hq = `query{viewer{repositories(first:100,ownerAffiliations:[OWNER],orderBy:{field:PUSHED_AT,direction:DESC}){nodes{nameWithOwner defaultBranchRef{name target{oid}}}}}}`;
+  const hq = `query{viewer{repositories(first:100,ownerAffiliations:[OWNER,COLLABORATOR,ORGANIZATION_MEMBER],orderBy:{field:PUSHED_AT,direction:DESC}){nodes{nameWithOwner defaultBranchRef{name target{oid}}}}}}`;
   const hout = sh(GH(), ["api", "graphql", "-f", "query=" + hq], { timeout: 25000 });
   if (hout) {
     try {
@@ -236,7 +236,10 @@ function remoteMovedAhead(p, branch, oid) {
    merged or closed is done, and repeating it teaches you to ignore the card ── */
 function parseNextRefs(step) {
   const out = [];
-  const re = /\b(PRs?|pull requests?|issues?)\s+(#?\d+(?:\s*(?:,|and|&)\s*#\d+)*)/gi;
+  /* every number needs its "#": bare digits after the keyword turn prose like
+     "close the remaining issues 2 weeks after launch" into issue #2, and a
+     wrong parse here prunes a live step */
+  const re = /\b(PRs?|pull requests?|issues?)\s+(#\d+(?:\s*(?:,|and|&)\s*#\d+)*)/gi;
   let m;
   while ((m = re.exec(String(step || "")))) {
     const type = m[1].toLowerCase().startsWith("i") ? "issue" : "pr";

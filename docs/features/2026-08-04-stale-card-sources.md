@@ -38,8 +38,10 @@ twelve repos. A board that repeats done work teaches its owner to ignore it.
   name (fetched, not merged), the card gets a neutral `behind origin/<branch>
   — pull to refresh` flag. Neutral by design: nothing is at risk, the view is
   just stale. Cached in `.cache.json` for offline sweeps.
-- `sweep.js` is now requirable (config load is lazy, `main()` runs only under
-  `require.main`) and exports its pure helpers for `test/engine.test.js`.
+- `sweep.js` is now requirable (a missing, malformed, or wrongly-shaped
+  `config.json` yields `null` at load instead of throwing, `main()` refuses on
+  `null`, and `main()` runs only under `require.main`) and exports its pure
+  helpers for `test/engine.test.js`.
 - CI runs the new unit tests and asserts `--dry` also writes no
   `.prstate.json`.
 
