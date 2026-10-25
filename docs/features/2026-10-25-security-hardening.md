@@ -1,4 +1,4 @@
-# Feature: Dependabot cooldown, zizmor CI job, least-privilege auto-merge
+# Feature: Dependabot cooldown, zizmor CI job, merge-when-clean
 
 **Branch:** security/hardening-2026-10-25
 **Date:** 2026-10-25
@@ -6,8 +6,7 @@
 ## Summary
 Adds a Dependabot config for workflow actions with a 7-day cooldown, a
 `zizmor` workflow that fails on high-severity findings, and the owner's
-merge-when-clean job. The auto-merge
-workflow now grants write access only to its job.
+merge-when-clean job, and removes the old Dependabot auto-merge workflow.
 
 ## Motivation
 Phase 2 of the 2026-10-25 security sweep. The action SHAs pinned in #9

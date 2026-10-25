@@ -1,4 +1,4 @@
-# Session: Dependabot cooldown, zizmor CI job, least-privilege auto-merge
+# Session: Dependabot cooldown, zizmor CI job, merge-when-clean
 
 **Branch:** security/hardening-2026-10-25
 **Date:** 2026-10-25
