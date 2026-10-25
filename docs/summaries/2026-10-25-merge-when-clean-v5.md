@@ -1,4 +1,4 @@
-# Session: merge-when-clean template v5
+# Session: merge-when-clean template v6
 
 **Branch:** security/merge-when-clean-v5
 **Date:** 2026-10-25
@@ -8,5 +8,5 @@
    follow-up PR now, since v4 never merges anything."
 
 ## Steps taken
-- Checked the template hash (`1c493dd7…`) and the new `set +e` line; copied it unchanged.
+- Checked the template hash (`af7e7bd9…`) and the new `set +e` line; copied it unchanged.
 - `actionlint` and `zizmor`: clean. `node --test test/*.test.js`: pass.
