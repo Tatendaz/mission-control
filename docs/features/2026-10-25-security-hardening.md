@@ -23,8 +23,9 @@ future workflow change from reintroducing the problems the sweep fixed.
 - `.github/workflows/merge-when-clean.yml` (new, owner's template, unchanged):
   merges Dependabot PRs and the owner's `security/*` or `automerge` PRs once CI
   is green, a real review ran and 0 threads are open.
-- `dependabot-auto-merge.yml`: top-level `permissions: contents: read`; the
-  write scopes moved onto the auto-merge job.
+- `dependabot-auto-merge.yml`: deleted. It merged Dependabot patch/minor PRs
+  on green CI with no review, which bypassed merge-when-clean's review gate.
+  merge-when-clean.yml now merges Dependabot PRs after CI and a real review.
 
 ## Notes
 No package manager here (Node standard library only), so no package-manager cooldown applies.
