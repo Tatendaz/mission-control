@@ -11,14 +11,12 @@ on:
   pull_request:
     branches: [main, master]
 
-# Dependabot-triggered runs get a read-only token by default; raise it so the
-# job can approve and enable auto-merge on the PR. (Dependabot PR branches live
+# Dependabot-triggered runs get a read-only token by default; the job below
+# raises it so it can approve and enable auto-merge on the PR. (Dependabot PR branches live
 # in this repo, so this elevation is allowed — see GitHub's "Automating
 # Dependabot" docs.)
 permissions:
-  contents: write
-  pull-requests: write
-  checks: read
+  contents: read
 
 # One run per PR; a new push supersedes the old run (whose merge would be
 # rejected anyway by --match-head-commit below).
@@ -33,6 +31,10 @@ jobs:
     # a later pusher, which is the hardened check GitHub recommends for
     # Dependabot.
     if: github.event.pull_request.user.login == 'dependabot[bot]'
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: read
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:

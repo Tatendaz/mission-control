@@ -1,0 +1,8 @@
+# Keep every setting from the CodeRabbit web UI; only add the keys below.
+inheritance: true
+reviews:
+  auto_review:
+    # Dependabot PRs carry no "@coderabbitai ignore"; skip their automatic
+    # reviews to save review budget. A manual "@coderabbitai review" still works.
+    ignore_usernames:
+      - "dependabot[bot]"
