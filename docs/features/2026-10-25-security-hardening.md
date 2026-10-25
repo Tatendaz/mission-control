@@ -5,8 +5,8 @@
 
 ## Summary
 Adds a Dependabot config for workflow actions with a 7-day cooldown, a
-`zizmor` workflow that fails on high-severity findings, and a CodeRabbit
-setting that skips automatic reviews of Dependabot PRs. The auto-merge
+`zizmor` workflow that fails on high-severity findings, and the owner's
+merge-when-clean job. The auto-merge
 workflow now grants write access only to its job.
 
 ## Motivation
@@ -20,8 +20,9 @@ future workflow change from reintroducing the problems the sweep fixed.
   `open-pull-requests-limit: 3`, one group for minor + patch.
 - `.github/workflows/zizmor.yml` (new): `zizmorcore/zizmor-action` v0.7.1 (SHA-pinned),
   zizmor 1.31.1, `min-severity: high`, no SARIF upload.
-- `.coderabbit.yaml` (new): `inheritance: true` (keeps the web UI settings) and
-  `reviews.auto_review.ignore_usernames: ["dependabot[bot]"]`.
+- `.github/workflows/merge-when-clean.yml` (new, owner's template, unchanged):
+  merges Dependabot PRs and the owner's `security/*` or `automerge` PRs once CI
+  is green, a real review ran and 0 threads are open.
 - `dependabot-auto-merge.yml`: top-level `permissions: contents: read`; the
   write scopes moved onto the auto-merge job.
 
